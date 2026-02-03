@@ -174,30 +174,38 @@
 
   <div id="recenterFab"></div>
 
-  <!-- Server logger -->
+  <!-- Logger (GitHub Pages-safe) -->
   <script>
-  function logToServer(level, msg) {
-    // IMPORTANT: catch the async rejection
-    return fetch("/log", {
-      method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({ level, msg })
-    }).catch(() => {
-      // swallow network failures; still keep console logging
-    });
-  }
+    // GitHub Pages has no backend routes. Keep logging in console everywhere,
+    // and only attempt server logging when running on localhost / LAN dev.
+    const CAN_SERVER_LOG =
+      location.hostname === "localhost" ||
+      location.hostname === "127.0.0.1" ||
+      // Common LAN dev hosts (optional)
+      /^\d{1,3}(\.\d{1,3}){3}$/.test(location.hostname);
 
-  const log = (...a) => {
-    console.log(...a);
-    logToServer("LOG", a.join(" "));
-  };
+    function logToServer(level, msg) {
+      if (!CAN_SERVER_LOG) return Promise.resolve();
+      // Use relative path so it works when hosted in a subdirectory.
+      return fetch("./log", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ level, msg })
+      }).catch(() => {
+        // swallow network failures; still keep console logging
+      });
+    }
 
-  const err = (...a) => {
-    console.error(...a);
-    logToServer("ERROR", a.join(" "));
-  };
-</script>
+    const log = (...a) => {
+      console.log(...a);
+      logToServer("LOG", a.join(" "));
+    };
 
+    const err = (...a) => {
+      console.error(...a);
+      logToServer("ERROR", a.join(" "));
+    };
+  </script>
 
   <!-- MAIN NAVIGATION LOGIC -->
   <script type="module">
@@ -421,144 +429,143 @@
     // ROUTE BUILDER
     // --------------------------
     async function buildRouteFromUser() {
-  if (!userPos) throw new Error("User location not ready");
+      if (!userPos) throw new Error("User location not ready");
 
-  const keysAll = Object.keys(points);
-  const coordsAll = keysAll.map(k => points[k]);
-  const N = coordsAll.length;
+      const keysAll = Object.keys(points);
+      const coordsAll = keysAll.map(k => points[k]);
+      const N = coordsAll.length;
 
-  const MAX_TURBINES = 24;     // user + 24 = 25 coords cap
-  const CHUNK = 24;            // for user->turbine one-to-many calls
-  const BLOCK = 12;            // for turbine<->turbine blocks: 12+12=24 < 25
+      const MAX_TURBINES = 24;     // user + 24 = 25 coords cap
+      const CHUNK = 24;            // for user->turbine one-to-many calls
+      const BLOCK = 12;            // for turbine<->turbine blocks: 12+12=24 < 25
 
-  // -------------------------------
-  // A) USER -> TURBINE distances (chunked)
-  // -------------------------------
-  // Returns: [{ key, coord, distMeters }, ...] for ALL turbines
-  const userToAll = [];
+      // -------------------------------
+      // A) USER -> TURBINE distances (chunked)
+      // -------------------------------
+      // Returns: [{ key, coord, distMeters }, ...] for ALL turbines
+      const userToAll = [];
 
-  for (let i = 0; i < N; i += CHUNK) {
-    const chunkKeys = keysAll.slice(i, i + CHUNK);
-    const chunkCoords = coordsAll.slice(i, i + CHUNK);
+      for (let i = 0; i < N; i += CHUNK) {
+        const chunkKeys = keysAll.slice(i, i + CHUNK);
+        const chunkCoords = coordsAll.slice(i, i + CHUNK);
 
-    // Matrix coords: [user, ...chunkTurbines] (<= 25)
-    const m = await fetchDistanceMatrix([userPos, ...chunkCoords], mapboxgl.accessToken);
-    // user row is 0, turbines are columns 1..chunkLen
-    for (let j = 0; j < chunkKeys.length; j++) {
-      const d = m[0][j + 1];
-      userToAll.push({ key: chunkKeys[j], coord: chunkCoords[j], dist: d });
-    }
-  }
-
-  // Filter unreachable (null) distances defensively
-  const reachable = userToAll.filter(x => Number.isFinite(x.dist));
-  if (reachable.length === 0) throw new Error("No reachable turbines by driving distance from user.");
-
-  // Sort by user->turbine driving distance
-  reachable.sort((a, b) => a.dist - b.dist);
-
-  // -------------------------------
-  // B) Choose the closest 24 turbines (driving distance)
-  // -------------------------------
-  const chosen = reachable.slice(0, Math.min(MAX_TURBINES, reachable.length));
-  const keys = chosen.map(x => x.key);
-  const turbineCoords = chosen.map(x => x.coord);
-  const n = turbineCoords.length;
-
-  // Dynamic start: the closest turbine among the chosen list is index 0
-  const bestFirstIdx = 0;
-  log("First turbine (by road):", keys[bestFirstIdx], `(${(chosen[0].dist / 1609.344).toFixed(2)} mi)`);
-
-  // -------------------------------
-  // C) Build turbine-only submatrix (n x n) via chunked block calls
-  // -------------------------------
-  // We compute EXACT distances between the chosen turbines using Matrix blocks.
-  const subMatrix = Array.from({ length: n }, () => Array(n).fill(Infinity));
-  for (let i = 0; i < n; i++) subMatrix[i][i] = 0;
-
-  // block index lists
-  const blocks = [];
-  for (let i = 0; i < n; i += BLOCK) blocks.push([...Array(Math.min(BLOCK, n - i)).keys()].map(k => i + k));
-
-  for (const A of blocks) {
-    for (const B of blocks) {
-      // coords = A + B (<= 24 if BLOCK=12)
-      const coordsCall = A.map(idx => turbineCoords[idx]).concat(B.map(idx => turbineCoords[idx]));
-      const m = await fetchDistanceMatrix(coordsCall, mapboxgl.accessToken);
-
-      // m rows/cols correspond to coordsCall indices
-      // Fill subMatrix[A[i]][B[j]] from m[i][len(A)+j]
-      for (let ai = 0; ai < A.length; ai++) {
-        for (let bj = 0; bj < B.length; bj++) {
-          const d = m[ai][A.length + bj];
-          if (Number.isFinite(d)) subMatrix[A[ai]][B[bj]] = d;
+        // Matrix coords: [user, ...chunkTurbines] (<= 25)
+        const m = await fetchDistanceMatrix([userPos, ...chunkCoords], mapboxgl.accessToken);
+        // user row is 0, turbines are columns 1..chunkLen
+        for (let j = 0; j < chunkKeys.length; j++) {
+          const d = m[0][j + 1];
+          userToAll.push({ key: chunkKeys[j], coord: chunkCoords[j], dist: d });
         }
       }
+
+      // Filter unreachable (null) distances defensively
+      const reachable = userToAll.filter(x => Number.isFinite(x.dist));
+      if (reachable.length === 0) throw new Error("No reachable turbines by driving distance from user.");
+
+      // Sort by user->turbine driving distance
+      reachable.sort((a, b) => a.dist - b.dist);
+
+      // -------------------------------
+      // B) Choose the closest 24 turbines (driving distance)
+      // -------------------------------
+      const chosen = reachable.slice(0, Math.min(MAX_TURBINES, reachable.length));
+      const keys = chosen.map(x => x.key);
+      const turbineCoords = chosen.map(x => x.coord);
+      const n = turbineCoords.length;
+
+      // Dynamic start: the closest turbine among the chosen list is index 0
+      const bestFirstIdx = 0;
+      log("First turbine (by road):", keys[bestFirstIdx], `(${(chosen[0].dist / 1609.344).toFixed(2)} mi)`);
+
+      // -------------------------------
+      // C) Build turbine-only submatrix (n x n) via chunked block calls
+      // -------------------------------
+      // We compute EXACT distances between the chosen turbines using Matrix blocks.
+      const subMatrix = Array.from({ length: n }, () => Array(n).fill(Infinity));
+      for (let i = 0; i < n; i++) subMatrix[i][i] = 0;
+
+      // block index lists
+      const blocks = [];
+      for (let i = 0; i < n; i += BLOCK) blocks.push([...Array(Math.min(BLOCK, n - i)).keys()].map(k => i + k));
+
+      for (const A of blocks) {
+        for (const B of blocks) {
+          // coords = A + B (<= 24 if BLOCK=12)
+          const coordsCall = A.map(idx => turbineCoords[idx]).concat(B.map(idx => turbineCoords[idx]));
+          const m = await fetchDistanceMatrix(coordsCall, mapboxgl.accessToken);
+
+          // m rows/cols correspond to coordsCall indices
+          // Fill subMatrix[A[i]][B[j]] from m[i][len(A)+j]
+          for (let ai = 0; ai < A.length; ai++) {
+            for (let bj = 0; bj < B.length; bj++) {
+              const d = m[ai][A.length + bj];
+              if (Number.isFinite(d)) subMatrix[A[ai]][B[bj]] = d;
+            }
+          }
+        }
+      }
+
+      // -------------------------------
+      // D) Greedy + 2-opt starting at dynamic bestFirstIdx
+      // -------------------------------
+      let orderIdx = greedyOrder(subMatrix, bestFirstIdx);
+      orderIdx = twoOpt(orderIdx, subMatrix);
+
+      const orderedCoords = orderIdx.map(i => turbineCoords[i]);
+      const orderedNames = orderIdx.map(i => keys[i]);
+
+      // Directions: user + 24 turbines max
+      const allCoords = [userPos, ...orderedCoords];
+
+      log("Route order (TSP):", orderedNames.join(" → "));
+
+      // -------------------------------
+      // E) Fetch Directions route, keep the rest of your function unchanged
+      // -------------------------------
+      navRoute = await fetchRouteGeoJSON(allCoords, mapboxgl.accessToken);
+      steps = flattenSteps(navRoute);
+
+      log("========== FULL ROUTE BREAKDOWN ==========");
+      navRoute.legs.forEach((leg, legIndex) => {
+        log(`--- Leg ${legIndex + 1}:`);
+        log(`    From: ${allCoords[legIndex].join(", ")}`);
+        log(`    To:   ${allCoords[legIndex + 1].join(", ")}`);
+        log(`    Distance: ${(leg.distance / 1609.344).toFixed(2)} mi`);
+        log(`    Duration: ${(leg.duration / 60).toFixed(1)} min`);
+
+        leg.steps.forEach((step, i) => {
+          const inst = step.maneuver.instruction || step.maneuver.type;
+          const street = step.name || "Unnamed road";
+
+          let distMi = step.distance / 1609.344;
+          let distStr = distMi < 0.1
+            ? `${Math.round(step.distance * 3.28084)} ft`
+            : `${distMi.toFixed(2)} mi`;
+
+          log(`       Step ${i + 1}: ${inst}`);
+          log(`           Road: ${street}`);
+          log(`           Distance: ${distStr}`);
+        });
+
+        log("-----------------------------------------");
+      });
+      log("========== END ROUTE BREAKDOWN ==========");
+
+      stepIdx = 0;
+
+      clearRoute(map, "navRoute", "navRouteLine");
+      drawRoute(map, navRoute.geometry, "navRoute", "navRouteLine");
+      fitToRoute(map, navRoute.geometry, 60);
+
+      navActive = true;
+      followUser = true;
+      recenterFab.style.display = "none";
+
+      if (arrowMapboxMarker)
+        arrowMapboxMarker.getElement().classList.add("arrow-active");
+
+      updateNavUI();
     }
-  }
-
-  // -------------------------------
-  // D) Greedy + 2-opt starting at dynamic bestFirstIdx
-  // -------------------------------
-  let orderIdx = greedyOrder(subMatrix, bestFirstIdx);
-  orderIdx = twoOpt(orderIdx, subMatrix);
-
-  const orderedCoords = orderIdx.map(i => turbineCoords[i]);
-  const orderedNames = orderIdx.map(i => keys[i]);
-
-  // Directions: user + 24 turbines max
-  const allCoords = [userPos, ...orderedCoords];
-
-  log("Route order (TSP):", orderedNames.join(" → "));
-
-  // -------------------------------
-  // E) Fetch Directions route, keep the rest of your function unchanged
-  // -------------------------------
-  navRoute = await fetchRouteGeoJSON(allCoords, mapboxgl.accessToken);
-  steps = flattenSteps(navRoute);
-
-  log("========== FULL ROUTE BREAKDOWN ==========");
-  navRoute.legs.forEach((leg, legIndex) => {
-    log(`--- Leg ${legIndex + 1}:`);
-    log(`    From: ${allCoords[legIndex].join(", ")}`);
-    log(`    To:   ${allCoords[legIndex + 1].join(", ")}`);
-    log(`    Distance: ${(leg.distance / 1609.344).toFixed(2)} mi`);
-    log(`    Duration: ${(leg.duration / 60).toFixed(1)} min`);
-
-    leg.steps.forEach((step, i) => {
-      const inst = step.maneuver.instruction || step.maneuver.type;
-      const street = step.name || "Unnamed road";
-
-      let distMi = step.distance / 1609.344;
-      let distStr = distMi < 0.1
-        ? `${Math.round(step.distance * 3.28084)} ft`
-        : `${distMi.toFixed(2)} mi`;
-
-      log(`       Step ${i + 1}: ${inst}`);
-      log(`           Road: ${street}`);
-      log(`           Distance: ${distStr}`);
-    });
-
-    log("-----------------------------------------");
-  });
-  log("========== END ROUTE BREAKDOWN ==========");
-
-  stepIdx = 0;
-
-  clearRoute(map, "navRoute", "navRouteLine");
-  drawRoute(map, navRoute.geometry, "navRoute", "navRouteLine");
-  fitToRoute(map, navRoute.geometry, 60);
-
-  navActive = true;
-  followUser = true;
-  recenterFab.style.display = "none";
-
-  if (arrowMapboxMarker)
-    arrowMapboxMarker.getElement().classList.add("arrow-active");
-
-  updateNavUI();
-}
-
 
     // --------------------------
     // GPS ENABLE FLOW
