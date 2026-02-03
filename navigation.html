@@ -1,0 +1,680 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Navigation — Site Navigator</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#0078ff" />
+
+  <!-- Mapbox -->
+  <link href="https://api.mapbox.com/mapbox-gl-js/v3.15.0/mapbox-gl.css" rel="stylesheet" />
+  <script src="https://api.mapbox.com/mapbox-gl-js/v3.15.0/mapbox-gl.js"></script>
+
+  <!-- Turf -->
+  <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
+
+  <style>
+    html, body {
+      height: 100%;
+      margin: 0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      background: #000;
+      overflow: hidden;
+    }
+
+    #map {
+      position: absolute;
+      inset: 0;
+    }
+
+    /* GPS Overlay */
+    #enableGPS {
+      position: absolute;
+      inset: 0;
+      background: rgba(0,0,0,0.65);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 5;
+    }
+    #enableGPS button {
+      background: #00b35a;
+      color: #fff;
+      font-size: 18px;
+      padding: 14px 26px;
+      border-radius: 10px;
+      border: none;
+      cursor: pointer;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+    }
+
+    /* Nav top bar */
+    #navTop {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 84px;
+      background: rgba(255,255,255,0.97);
+      box-shadow: 0 2px 10px rgba(0,0,0,0.15);
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: 12px 16px;
+      z-index: 3;
+      pointer-events: none;
+    }
+    #navInstruction {
+      font-size: 18px;
+      font-weight: 700;
+      color: #111;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    #navNextDist {
+      font-size: 13px;
+      color: #333;
+    }
+
+    /* Nav bottom bar */
+    #navBottom {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 96px;
+      background: rgba(255,255,255,0.97);
+      box-shadow: 0 -2px 10px rgba(0,0,0,0.15);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 16px;
+      z-index: 3;
+      pointer-events: auto;
+    }
+    .badge {
+      background: #f2f4f8;
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 14px;
+      min-width: 120px;
+      text-align: center;
+    }
+    #btnExitNav {
+      background: #ff4d4f;
+      color: #fff;
+      border: none;
+      border-radius: 10px;
+      padding: 10px 16px;
+      font-size: 14px;
+      cursor: pointer;
+    }
+
+    /* Arrow marker */
+    .arrow-marker {
+      width: 28px;
+      height: 28px;
+      background: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><polygon points="50,0 90,100 50,80 10,100" fill="%230078ff"/></svg>');
+      background-size: contain;
+      background-repeat: no-repeat;
+      transform-origin: center center;
+      transition: transform .07s linear;
+    }
+    .arrow-active {
+      filter: hue-rotate(90deg) brightness(1.3);
+    }
+
+    /* Recenter FAB */
+    #recenterFab {
+      position: absolute;
+      right: 16px;
+      bottom: 120px;
+      width: 46px;
+      height: 46px;
+      border-radius: 50%;
+      background: #fff;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      z-index: 3;
+    }
+    #recenterFab::before {
+      content: "";
+      width: 24px;
+      height: 24px;
+      background: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160" viewBox="0 0 24 24"><path fill="%230078ff" d="M12 8l4 4-4 4-1.41-1.41L12.17 13H4v-2h8.17l-1.58-1.59z"/></svg>')
+        no-repeat center/contain;
+      transform: rotate(-90deg);
+    }
+  </style>
+</head>
+<body>
+
+  <div id="map"></div>
+
+  <!-- GPS Overlay -->
+  <div id="enableGPS">
+    <button id="btnEnableGPS">Enable GPS</button>
+  </div>
+
+  <!-- Turn-by-turn UI -->
+  <div id="navTop">
+    <div id="navInstruction">Loading…</div>
+    <div id="navNextDist">Next: —</div>
+  </div>
+
+  <div id="navBottom">
+    <div id="navRemain" class="badge">Remaining: —</div>
+    <div id="navETA" class="badge">ETA: —</div>
+    <button id="btnExitNav">Exit</button>
+  </div>
+
+  <div id="recenterFab"></div>
+
+  <!-- Server logger -->
+  <script>
+  function logToServer(level, msg) {
+    // IMPORTANT: catch the async rejection
+    return fetch("/log", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ level, msg })
+    }).catch(() => {
+      // swallow network failures; still keep console logging
+    });
+  }
+
+  const log = (...a) => {
+    console.log(...a);
+    logToServer("LOG", a.join(" "));
+  };
+
+  const err = (...a) => {
+    console.error(...a);
+    logToServer("ERROR", a.join(" "));
+  };
+</script>
+
+
+  <!-- MAIN NAVIGATION LOGIC -->
+  <script type="module">
+    import {
+      SITE_DATA,
+      fetchDistanceMatrix,
+      greedyOrder,
+      fetchRouteGeoJSON,
+      drawRoute,
+      fitToRoute,
+      clearRoute
+    } from "./route-planner.js";
+
+    log("navigation.html loaded");
+
+    //----------------------------------------------------
+    // URL Override — allows ?start=lng,lat for debugging
+    //----------------------------------------------------
+    function getURLOverrideStart() {
+      const params = new URLSearchParams(window.location.search);
+      if (!params.has("start")) return null;
+
+      const parts = params.get("start").split(",");
+      if (parts.length !== 2) return null;
+
+      const lng = parseFloat(parts[0]);
+      const lat = parseFloat(parts[1]);
+
+      if (isNaN(lng) || isNaN(lat)) return null;
+
+      log("⚠ URL Override: Using custom start:", lng, lat);
+      return [lng, lat];
+    }
+
+    const urlOverrideStart = getURLOverrideStart();
+
+    // --------------------------
+    // LOAD SITE + EXCLUSIONS
+    // --------------------------
+    const siteName = localStorage.getItem("selectedSite");
+    const excluded = JSON.parse(localStorage.getItem("excludedTurbines") || "[]");
+
+    if (!siteName || !SITE_DATA[siteName]) {
+      alert("No site selected.");
+      window.location.href = "index.html";
+    }
+
+    const site = SITE_DATA[siteName];
+    const points = {};
+
+    for (const [tName, coords] of Object.entries(site.points)) {
+      if (!excluded.includes(tName)) points[tName] = coords;
+    }
+
+    const stopNames = Object.keys(points);
+    if (stopNames.length === 0) {
+      alert("You excluded every turbine — no navigation possible.");
+      window.location.href = "exclude.html";
+    }
+
+    log("Selected site:", siteName);
+    log("Included turbines:", stopNames.join(", "));
+
+    // --------------------------
+    // MAP INIT
+    // --------------------------
+    mapboxgl.accessToken = "pk.eyJ1IjoieW91cmVsZGVyIiwiYSI6ImNtaDhxZHg1bTAxeWkyaXB5aTAyM2ZyY3gifQ.pkTMlQzTDcgl2pvIGyP1Jw";
+
+    // Center on average of site turbines initially
+    let avgLng = 0, avgLat = 0;
+    stopNames.forEach(n => {
+      avgLng += points[n][0];
+      avgLat += points[n][1];
+    });
+    avgLng /= stopNames.length;
+    avgLat /= stopNames.length;
+
+    const map = new mapboxgl.Map({
+      container: "map",
+      style: "mapbox://styles/mapbox/streets-v12",
+      center: [avgLng, avgLat],
+      zoom: 12
+    });
+
+    map.on("load", () => log("Map loaded"));
+
+    // --------------------------
+    // DOM
+    // --------------------------
+    const gpsOverlay = document.getElementById("enableGPS");
+    const btnEnableGPS = document.getElementById("btnEnableGPS");
+    const navInstruction = document.getElementById("navInstruction");
+    const navNextDist = document.getElementById("navNextDist");
+    const navRemain = document.getElementById("navRemain");
+    const navETA = document.getElementById("navETA");
+    const btnExitNav = document.getElementById("btnExitNav");
+    const recenterFab = document.getElementById("recenterFab");
+
+    // --------------------------
+    // STATE
+    // --------------------------
+    let userPos = null;
+    let headingDeg = null;
+    let followUser = true;
+    let navActive = false;
+
+    let arrowMapboxMarker = null;
+
+    let navRoute = null;
+    let steps = [];
+    let stepIdx = 0;
+
+    const MANEUVER_RADIUS_M = 15;
+    const METERS_PER_MILE = 1609.344;
+
+    // --------------------------
+    // HELPERS
+    // --------------------------
+    function miles(meters) { return meters / METERS_PER_MILE; }
+
+    function formatMiles(mi) {
+      if (mi < 0.1) return `${Math.round(mi * 5280)} ft`;
+      if (mi < 10) return `${mi.toFixed(1)} mi`;
+      return `${mi.toFixed(0)} mi`;
+    }
+
+    function formatDuration(sec) {
+      if (!sec || sec <= 0) return "0 min";
+      const m = Math.round(sec / 60);
+      if (m < 60) return `${m} min`;
+      const h = Math.floor(m / 60);
+      const r = m % 60;
+      return r ? `${h} h ${r} min` : `${h} h`;
+    }
+
+    function flattenSteps(route) {
+      const out = [];
+      for (const leg of route.legs || []) {
+        for (const s of leg.steps || []) out.push(s);
+      }
+      return out;
+    }
+
+    function updateNavUI() {
+      if (!navActive || !steps.length) return;
+
+      const step = steps[Math.min(stepIdx, steps.length - 1)];
+      const maneuver = step.maneuver || {};
+
+      navInstruction.textContent = maneuver.instruction || maneuver.type || "Continue";
+
+      if (userPos && maneuver.location) {
+        const dMi = turf.distance(turf.point(userPos), turf.point(maneuver.location), {units: "miles"});
+        navNextDist.textContent = `Next: ${formatMiles(dMi)}`;
+      } else {
+        navNextDist.textContent = "Next: —";
+      }
+
+      let remMeters = 0;
+      let remSeconds = 0;
+      for (let i = stepIdx; i < steps.length; i++) {
+        remMeters += steps[i].distance || 0;
+        remSeconds += steps[i].duration || 0;
+      }
+
+      navRemain.textContent = `Remaining: ${formatMiles(miles(remMeters))}`;
+      navETA.textContent = `ETA: ${formatDuration(remSeconds)}`;
+    }
+
+    function maybeAdvanceStep() {
+      if (!navActive || !steps.length || stepIdx >= steps.length - 1) return;
+
+      const step = steps[stepIdx];
+      const maneuver = step.maneuver;
+      if (!maneuver?.location || !userPos) return;
+
+      const distMi = turf.distance(turf.point(userPos), turf.point(maneuver.location), {units:"miles"});
+      if (distMi * METERS_PER_MILE <= MANEUVER_RADIUS_M) {
+        stepIdx = Math.min(stepIdx + 1, steps.length - 1);
+        updateNavUI();
+      }
+    }
+
+    // ---- Route length helper (for 2-opt) ----
+    function routeLength(order, mat) {
+      let sum = 0;
+      for (let i = 0; i < order.length - 1; i++) {
+        sum += mat[order[i]][order[i + 1]];
+      }
+      return sum;
+    }
+
+    // ---- 2-opt heuristic to improve the greedy TSP order ----
+    function twoOpt(order, mat) {
+      const n = order.length;
+      let bestOrder = order.slice();
+      let bestDist = routeLength(bestOrder, mat);
+      let improved = true;
+
+      while (improved) {
+        improved = false;
+        for (let i = 0; i < n - 2; i++) {
+          for (let k = i + 2; k < n; k++) {
+            const newOrder = bestOrder.slice();
+            const segment = newOrder.slice(i + 1, k + 1).reverse();
+            newOrder.splice(i + 1, k - i, ...segment);
+
+            const newDist = routeLength(newOrder, mat);
+            if (newDist + 1e-6 < bestDist) {
+              bestDist = newDist;
+              bestOrder = newOrder;
+              improved = true;
+            }
+          }
+        }
+      }
+      return bestOrder;
+    }
+
+    // --------------------------
+    // ROUTE BUILDER
+    // --------------------------
+    async function buildRouteFromUser() {
+  if (!userPos) throw new Error("User location not ready");
+
+  const keysAll = Object.keys(points);
+  const coordsAll = keysAll.map(k => points[k]);
+  const N = coordsAll.length;
+
+  const MAX_TURBINES = 24;     // user + 24 = 25 coords cap
+  const CHUNK = 24;            // for user->turbine one-to-many calls
+  const BLOCK = 12;            // for turbine<->turbine blocks: 12+12=24 < 25
+
+  // -------------------------------
+  // A) USER -> TURBINE distances (chunked)
+  // -------------------------------
+  // Returns: [{ key, coord, distMeters }, ...] for ALL turbines
+  const userToAll = [];
+
+  for (let i = 0; i < N; i += CHUNK) {
+    const chunkKeys = keysAll.slice(i, i + CHUNK);
+    const chunkCoords = coordsAll.slice(i, i + CHUNK);
+
+    // Matrix coords: [user, ...chunkTurbines] (<= 25)
+    const m = await fetchDistanceMatrix([userPos, ...chunkCoords], mapboxgl.accessToken);
+    // user row is 0, turbines are columns 1..chunkLen
+    for (let j = 0; j < chunkKeys.length; j++) {
+      const d = m[0][j + 1];
+      userToAll.push({ key: chunkKeys[j], coord: chunkCoords[j], dist: d });
+    }
+  }
+
+  // Filter unreachable (null) distances defensively
+  const reachable = userToAll.filter(x => Number.isFinite(x.dist));
+  if (reachable.length === 0) throw new Error("No reachable turbines by driving distance from user.");
+
+  // Sort by user->turbine driving distance
+  reachable.sort((a, b) => a.dist - b.dist);
+
+  // -------------------------------
+  // B) Choose the closest 24 turbines (driving distance)
+  // -------------------------------
+  const chosen = reachable.slice(0, Math.min(MAX_TURBINES, reachable.length));
+  const keys = chosen.map(x => x.key);
+  const turbineCoords = chosen.map(x => x.coord);
+  const n = turbineCoords.length;
+
+  // Dynamic start: the closest turbine among the chosen list is index 0
+  const bestFirstIdx = 0;
+  log("First turbine (by road):", keys[bestFirstIdx], `(${(chosen[0].dist / 1609.344).toFixed(2)} mi)`);
+
+  // -------------------------------
+  // C) Build turbine-only submatrix (n x n) via chunked block calls
+  // -------------------------------
+  // We compute EXACT distances between the chosen turbines using Matrix blocks.
+  const subMatrix = Array.from({ length: n }, () => Array(n).fill(Infinity));
+  for (let i = 0; i < n; i++) subMatrix[i][i] = 0;
+
+  // block index lists
+  const blocks = [];
+  for (let i = 0; i < n; i += BLOCK) blocks.push([...Array(Math.min(BLOCK, n - i)).keys()].map(k => i + k));
+
+  for (const A of blocks) {
+    for (const B of blocks) {
+      // coords = A + B (<= 24 if BLOCK=12)
+      const coordsCall = A.map(idx => turbineCoords[idx]).concat(B.map(idx => turbineCoords[idx]));
+      const m = await fetchDistanceMatrix(coordsCall, mapboxgl.accessToken);
+
+      // m rows/cols correspond to coordsCall indices
+      // Fill subMatrix[A[i]][B[j]] from m[i][len(A)+j]
+      for (let ai = 0; ai < A.length; ai++) {
+        for (let bj = 0; bj < B.length; bj++) {
+          const d = m[ai][A.length + bj];
+          if (Number.isFinite(d)) subMatrix[A[ai]][B[bj]] = d;
+        }
+      }
+    }
+  }
+
+  // -------------------------------
+  // D) Greedy + 2-opt starting at dynamic bestFirstIdx
+  // -------------------------------
+  let orderIdx = greedyOrder(subMatrix, bestFirstIdx);
+  orderIdx = twoOpt(orderIdx, subMatrix);
+
+  const orderedCoords = orderIdx.map(i => turbineCoords[i]);
+  const orderedNames = orderIdx.map(i => keys[i]);
+
+  // Directions: user + 24 turbines max
+  const allCoords = [userPos, ...orderedCoords];
+
+  log("Route order (TSP):", orderedNames.join(" → "));
+
+  // -------------------------------
+  // E) Fetch Directions route, keep the rest of your function unchanged
+  // -------------------------------
+  navRoute = await fetchRouteGeoJSON(allCoords, mapboxgl.accessToken);
+  steps = flattenSteps(navRoute);
+
+  log("========== FULL ROUTE BREAKDOWN ==========");
+  navRoute.legs.forEach((leg, legIndex) => {
+    log(`--- Leg ${legIndex + 1}:`);
+    log(`    From: ${allCoords[legIndex].join(", ")}`);
+    log(`    To:   ${allCoords[legIndex + 1].join(", ")}`);
+    log(`    Distance: ${(leg.distance / 1609.344).toFixed(2)} mi`);
+    log(`    Duration: ${(leg.duration / 60).toFixed(1)} min`);
+
+    leg.steps.forEach((step, i) => {
+      const inst = step.maneuver.instruction || step.maneuver.type;
+      const street = step.name || "Unnamed road";
+
+      let distMi = step.distance / 1609.344;
+      let distStr = distMi < 0.1
+        ? `${Math.round(step.distance * 3.28084)} ft`
+        : `${distMi.toFixed(2)} mi`;
+
+      log(`       Step ${i + 1}: ${inst}`);
+      log(`           Road: ${street}`);
+      log(`           Distance: ${distStr}`);
+    });
+
+    log("-----------------------------------------");
+  });
+  log("========== END ROUTE BREAKDOWN ==========");
+
+  stepIdx = 0;
+
+  clearRoute(map, "navRoute", "navRouteLine");
+  drawRoute(map, navRoute.geometry, "navRoute", "navRouteLine");
+  fitToRoute(map, navRoute.geometry, 60);
+
+  navActive = true;
+  followUser = true;
+  recenterFab.style.display = "none";
+
+  if (arrowMapboxMarker)
+    arrowMapboxMarker.getElement().classList.add("arrow-active");
+
+  updateNavUI();
+}
+
+
+    // --------------------------
+    // GPS ENABLE FLOW
+    // --------------------------
+    btnEnableGPS.addEventListener("click", async () => {
+      log("Enable GPS clicked");
+
+      if (!navigator.geolocation) {
+        alert("Geolocation not supported.");
+        return;
+      }
+
+      try {
+        await new Promise(res => setTimeout(res, 50));
+
+        navigator.geolocation.getCurrentPosition(async pos => {
+          const realPos = [pos.coords.longitude, pos.coords.latitude];
+
+          if (urlOverrideStart) {
+            userPos = urlOverrideStart;
+            log("🐞 Using URL override instead of real GPS:", userPos.toString());
+          } else {
+            userPos = realPos;
+            log("GPS OK:", userPos.toString());
+          }
+
+          // Arrow marker
+          const el = document.createElement("div");
+          el.className = "arrow-marker";
+          arrowMapboxMarker = new mapboxgl.Marker(el)
+            .setLngLat(userPos)
+            .addTo(map);
+
+          map.flyTo({center: userPos, zoom: 15});
+
+          // Start full live watch
+          navigator.geolocation.watchPosition(p => {
+            userPos = [p.coords.longitude, p.coords.latitude];
+            if (arrowMapboxMarker) {
+              arrowMapboxMarker.setLngLat(userPos);
+              if (headingDeg !== null)
+                arrowMapboxMarker.getElement().style.transform = `rotate(${headingDeg}deg)`;
+            }
+
+            if (followUser) map.setCenter(userPos);
+            if (navActive) {
+              maybeAdvanceStep();
+              updateNavUI();
+            }
+          }, e => err("watchPosition:", e.message), {
+            enableHighAccuracy: true,
+            maximumAge: 0
+          });
+
+          // Heading listener
+          window.addEventListener("deviceorientationabsolute", e => {
+            if (e.alpha != null) {
+              headingDeg = e.alpha;
+              if (arrowMapboxMarker)
+                arrowMapboxMarker.getElement().style.transform = `rotate(${headingDeg}deg)`;
+            }
+          });
+
+          gpsOverlay.style.display = "none";
+
+          await buildRouteFromUser();
+
+        }, error => {
+          err("GPS initial error:", error.message);
+          alert("Location permission required.");
+        }, {enableHighAccuracy: true, timeout: 12000});
+
+      } catch (e) {
+        err("Enable GPS exception:", e);
+      }
+    });
+
+    // --------------------------
+    // EXIT NAVIGATION
+    // --------------------------
+    btnExitNav.addEventListener("click", () => {
+      navActive = false;
+      followUser = false;
+
+      if (arrowMapboxMarker)
+        arrowMapboxMarker.getElement().classList.remove("arrow-active");
+
+      clearRoute(map, "navRoute", "navRouteLine");
+
+      window.location.href = "index.html";
+    });
+
+    // --------------------------
+    // RECENTER FAB
+    // --------------------------
+    map.on("dragstart", () => {
+      followUser = false;
+      recenterFab.style.display = "flex";
+    });
+
+    recenterFab.addEventListener("click", () => {
+      followUser = true;
+      recenterFab.style.display = "none";
+      if (userPos) map.flyTo({center:userPos, zoom:15});
+    });
+
+  </script>
+
+  <!-- SW -->
+  <script>
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("./service-worker.js")
+        .then(reg => console.log("SW registered:", reg.scope))
+        .catch(err => console.error(err));
+    }
+  </script>
+
+</body>
+</html>

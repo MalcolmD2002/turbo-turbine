@@ -1,0 +1,438 @@
+// route-planner.js
+// Multi-site routing helpers (distance-based Matrix, directions with steps=true)
+
+// =====================================================
+// 1) SITE DATA
+// =====================================================
+export const SITE_DATA = {
+  "Dan's Mountain": {
+    startKey: "O&M",
+    points: {
+      "O&M": [ -78.889442, 39.598936 ],
+      "T1":  [ -78.8743278560119, 39.61816735610588 ],
+      "T2":  [ -78.8794983092136, 39.61578362008554 ],
+      "T3":  [ -78.88537227189981, 39.612791997229074 ],
+      "T4":  [ -78.89627325381515, 39.60047375106096 ],
+      "T5":  [ -78.90082215980239, 39.595504788439776 ],
+      "T6":  [ -78.88700468711146, 39.59770410935252 ],
+      "T7":  [ -78.89046076283148, 39.59272831654216 ],
+      "T8":  [ -78.89503698957539, 39.58818624074411 ],
+      "T9":  [ -78.90116366926088, 39.58427595744427 ]
+    }
+  },
+
+  "Minden": {
+    startKey: "O&M",
+    points: {
+      "O&M":  [ -83.027, 43.804 ],
+      "MI1":  [ -82.753, 43.668 ],
+      "MI2":  [ -82.763, 43.663 ],
+      "MI3":  [ -82.765, 43.656 ],
+      "MI4":  [ -82.784, 43.648 ],
+      "MI5":  [ -82.770, 43.647 ],
+      "MI6":  [ -82.763, 43.647 ],
+      "MI7":  [ -82.783, 43.640 ],
+      "MI8":  [ -82.765, 43.637 ],
+      "MI9":  [ -82.752, 43.638 ],
+      "MI10": [ -82.773, 43.633 ],
+      "MI11": [ -82.765, 43.633 ],
+      "MI13": [ -82.768, 43.623 ],
+      "MI14": [ -82.763, 43.623 ],
+      "MI15": [ -82.815, 43.634 ],
+      "MI16": [ -82.810, 43.627 ],
+      "MI17": [ -82.804, 43.628 ],
+      "MI18": [ -82.821, 43.624 ],
+      "MI19": [ -82.815, 43.619 ],
+      "MI20": [ -82.807, 43.622 ],
+      "MI21": [ -82.798, 43.623 ]
+    }
+  },
+
+  "Isabella": {
+	  StartKey: "O&M",
+	  points: {
+		  "O&M": [ -84.461, 43.407],
+		  "T1": [ -84.641, 43.723],
+		  "T2": [ -84.661, 43.722],
+		  "T3": [ -84.662, 43.719],
+		  "T4": [ -84.662, 43.724],
+		  "T5": [ -84.713, 43.725],
+		  "T6": [ -84.718, 43.688],
+		  "T7": [ -84.722, 43.709],
+		  "T8": [ -84.722, 43.706],
+		  "T9": [ -84.722, 43.682],
+		  "T10": [ -84.722, 43.703],
+		  "T11": [ -84.723, 43.677],
+		  "T12": [ -84.734, 43.681],
+		  "T13": [ -84.736, 43.678],
+		  "T14": [ -84.783, 43.674],
+		  "T15": [ -84.793, 43.676],
+		  "T16": [ -84.799, 43.665],
+		  "T17": [ -84.802, 43.676],
+		  "T18": [ -84.803, 43.681],
+		  "T19": [ -84.816, 43.665],
+		  "T20": [ -84.819, 43.674],
+		  "T21": [ -84.821, 43.666],
+		  "T22": [ -84.823, 43.645],
+		  "T23": [ -84.833, 43.664],
+		  "T24": [ -84.833, 43.660],
+		  "T25": [ -84.834, 43.643],
+		  "T26": [ -84.838, 43.662],
+		  "T27": [ -84.839, 43.665],
+		  "T28": [ -84.842, 43.675],
+		  "T29": [ -84.843, 43.645],
+		  "T30": [ -84.844, 43.673],
+		  "T31": [ -84.844, 43.680],
+		  "T32": [ -84.852, 43.661],
+		  "T33": [ -84.854, 43.650],
+		  "T34": [ -84.855, 43.646],
+		  "T35": [ -84.856, 43.672],
+		  "T36": [ -84.862, 43.665],
+		  "T37": [ -84.862, 43.649],
+		  "T38": [ -84.863, 43.674],
+		  "T39": [ -84.864, 43.664],
+		  "T40": [ -84.865, 43.681],
+		  "T41": [ -84.872, 43.651],
+		  "T42": [ -84.873, 43.658],
+		  "T43": [ -84.874, 43.677],
+		  "T44": [ -84.877, 43.662],
+		  "T45": [ -84.880, 43.650],
+		  "T46": [ -84.882, 43.658],
+		  "T47": [ -84.883, 43.666],
+		  "T48": [ -84.892, 43.673],
+		  "T49": [ -84.895, 43.677],
+		  "T50": [ -84.897, 43.674],
+		  "T51": [ -84.897, 43.648],
+		  "T52": [ -84.899, 43.658],
+		  "T53": [ -84.903, 43.651],
+		  "T54": [ -84.903, 43.647],
+		  "T55": [ -84.914, 43.658],
+		  "T56": [ -84.922, 43.678],
+		  "T57": [ -84.922, 43.674],
+		  "T58": [ -84.924, 43.658],
+		  "T59": [ -84.924, 43.663],
+		  "T60": [ -84.933, 43.680],
+		  "T61": [ -84.933, 43.691],
+		  "T62": [ -84.933, 43.673],
+		  "T63": [ -84.933, 43.665],
+		  "T64": [ -84.935, 43.702],
+		  "T65": [ -84.939, 43.677],
+		  "T66": [ -84.941, 43.672],
+		  "T67": [ -84.941, 43.675],
+		  "T68": [ -84.944, 43.687],
+		  "T69": [ -84.944, 43.679],
+		  "T70": [ -84.946, 43.694],
+		  "T71": [ -84.946, 43.689],
+		  "T72": [ -84.792, 43.703],
+		  "T73": [ -84.795, 43.688],
+		  "T74": [ -84.798, 43.707],
+		  "T75": [ -84.798, 43.704],
+		  "T76": [ -84.813, 43.716],
+		  "T77": [ -84.814, 43.692],
+		  "T78": [ -84.821, 43.719],
+		  "T79": [ -84.821, 43.709],
+		  "T80": [ -84.832, 43.718],
+		  "T81": [ -84.833, 43.692],
+		  "T82": [ -84.835, 43.702],
+		  "T83": [ -84.836, 43.707],
+		  "T84": [ -84.837, 43.720],
+		  "T85": [ -84.837, 43.705],
+		  "T86": [ -84.841, 43.688],
+		  "T87": [ -84.842, 43.695],
+		  "T88": [ -84.845, 43.692],
+		  "T89": [ -84.847, 43.702],
+		  "T90": [ -84.853, 43.708],
+		  "T91": [ -84.854, 43.705],
+		  "T92": [ -84.858, 43.738],
+		  "T93": [ -84.858, 43.730],
+		  "T94": [ -84.859, 43.718],
+		  "T95": [ -84.860, 43.752],
+		  "T96": [ -84.860, 43.715],
+		  "T97": [ -84.860, 43.694],
+		  "T98": [ -84.861, 43.702],
+		  "T99": [ -84.862, 43.749],
+		  "T100": [ -84.745, 43.745],
+		  "T101": [ -84.864, 43.717],
+		  "T102": [ -84.873, 43.717],
+		  "T103": [ -84.873, 43.738],
+		  "T104": [ -84.874, 43.749],
+		  "T105": [ -84.874, 43.733],
+		  "T106": [ -84.875, 43.747],
+		  "T107": [ -84.875, 43.691],
+		  "T108": [ -84.875, 43.703],
+		  "T109": [ -84.875, 43.688],
+		  "T110": [ -84.878, 43.745],
+		  "T111": [ -84.879, 43.710],
+		  "T112": [ -84.880, 43.730],
+		  "T113": [ -84.881, 43.695],
+		  "T114": [ -84.881, 43.707],
+		  "T115": [ -84.883, 43.691],
+		  "T116": [ -84.884, 43.687],
+		  "T117": [ -84.893, 43.723],
+		  "T118": [ -84.894, 43.702],
+		  "T119": [ -84.894, 43.720],
+		  "T120": [ -84.895, 43.710],
+		  "T121": [ -84.898, 43.687],
+		  "T122": [ -84.899, 43.694],
+		  "T123": [ -84.901, 43.707],
+		  "T124": [ -84.903, 43.704],
+		  "T125": [ -84.903, 43.690],
+		  "T126": [ -84.904, 43.710],
+		  "T127": [ -84.913, 43.733],
+		  "T128": [ -84.914, 43.729],
+		  "T129": [ -84.915, 43.738],
+		  "T130": [ -84.915, 43.694],
+		  "T131": [ -84.924, 43.716],
+		  "T132": [ -84.932, 43.706],
+		  "T133": [ -84.933, 43.724],
+		  "T134": [ -84.935, 43.721],
+		  "T135": [ -84.944, 43.709],
+		  "T136": [ -84.945, 43.715]
+		}
+},
+
+"Heartland": {
+	StartKey: "O&M",
+	points: {
+		"O&M": [ -84.705, 43.178],
+		"T01": [ -84.831, 43.253],
+		"T02": [ -84.830, 43.244],
+		"T03": [ -84.815, 43.230],
+		"T04": [ -84.812, 43.247],
+		"T05": [ -84.814, 43.254],
+		"T06": [ -84.811, 43.261],
+		"T07": [ -84.810, 43.268],
+		"T08": [ -84.802, 43.274],
+		"T09": [ -84.786, 43.276],
+		"T10": [ -84.785, 43.268],
+		"T11": [ -84.793, 43.257],
+		"T12": [ -84.792, 43.253],
+		"T13": [ -84.790, 43.244],
+		"T14": [ -84.788, 43.237],
+		"T15": [ -84.774, 43.239],
+		"T16": [ -84.770, 43.237],
+		"T17": [ -84.765, 43.232],
+		"T18": [ -84.766, 43.244],
+		"T19": [ -84.755, 43.245],
+		"T20": [ -84.752, 43.239],
+		"T21": [ -84.749, 43.256],
+		"T22": [ -84.747, 43.253],
+		"T23": [ -84.742, 43.238],
+		"T24": [ -84.735, 43.245],
+		"T25": [ -84.723, 43.251],
+		"T26": [ -84.723, 43.243],
+		"T27": [ -84.722, 43.236],
+		"T28": [ -84.712, 43.253],
+		"T29": [ -84.704, 43.245],
+		"T30": [ -84.697, 43.243],
+		"T31": [ -84.700, 43.231],
+		"T32": [ -84.688, 43.240],
+		"T33": [ -84.679, 43.251],
+		"T34": [ -84.680, 43.244],
+		"T35": [ -84.678, 43.239],
+		"T36": [ -84.678, 43.232],
+		"T37": [ -84.670, 43.228],
+		"T38": [ -84.668, 43.223],
+		"T39": [ -84.633, 43.216],
+		"T40": [ -84.647, 43.213],
+		"T41": [ -84.651, 43.223],
+		"T42": [ -84.651, 43.228],
+		"T43": [ -84.652, 43.237],
+		"T44": [ -84.647, 43.253],
+		"T45": [ -84.629, 43.260],
+		"T46": [ -84.628, 43.252],
+		"T47": [ -84.634, 43.243],
+		"T48": [ -84.633, 43.228],
+		"T49": [ -84.629, 43.221],
+		"T50": [ -84.633, 43.213],
+		"T51": [ -84.617, 43.216],
+		"T52": [ -84.608, 43.214],
+		"T53": [ -84.596, 43.211],
+		"T54": [ -84.588, 43.207],
+		"T55": [ -84.594, 43.198],
+		"T56": [ -84.574, 43.199],
+		"T57": [ -84.572, 43.194],
+		"T58": [ -84.554, 43.187],
+		"T59": [ -84.539, 43.201],
+		"T60": [ -84.741, 43.208],
+		"T61": [ -84.722, 43.208],
+		"T62": [ -84.702, 43.213],
+		"T63": [ -84.702, 43.208],
+		"T64": [ -84.733, 43.199],
+		"T65": [ -84.722, 43.192],
+		"T66": [ -84.725, 43.186],
+		"T67": [ -84.731, 43.178],
+		"T68": [ -84.746, 43.174],
+		"T69": [ -84.732, 43.167],
+		"T70": [ -84.736, 43.158],
+		"T71": [ -84.726, 43.158],
+		"T72": [ -84.722, 43.151]
+		}
+}
+
+
+};
+
+// =====================================================
+// 2) MATRIX API (distance-based)
+// =====================================================
+export async function fetchDurationMatrix(coordsArray, accessToken, profile = "mapbox/driving") {
+  const coordStr = coordsArray.map(c => c.join(",")).join(";");
+  const url = `https://api.mapbox.com/directions-matrix/v1/${profile}/${coordStr}?annotations=distance&access_token=${encodeURIComponent(accessToken)}`;
+
+  const resp = await fetch(url);
+  const json = await resp.json();
+
+  if (!resp.ok || !json.distances) {
+    throw new Error(`Matrix error: ${resp.status} ${JSON.stringify(json)}`);
+  }
+
+  return json.distances; // NxN matrix of meters
+}
+
+// Alias required by navigation.html
+export async function fetchDistanceMatrix(coordsArray, accessToken, profile = "mapbox/driving") {
+  return fetchDurationMatrix(coordsArray, accessToken, profile);
+}
+
+// =====================================================
+// 3) GREEDY TSP ORDERING
+// =====================================================
+export function greedyOrder(distances, startIndex = 0) {
+  const n = distances.length;
+  const visited = new Array(n).fill(false);
+  visited[startIndex] = true;
+
+  const order = [startIndex];
+  let current = startIndex;
+
+  while (order.length < n) {
+    let best = -1;
+    let bestDist = Infinity;
+
+    for (let j = 0; j < n; j++) {
+      if (!visited[j] && distances[current][j] < bestDist) {
+        bestDist = distances[current][j];
+        best = j;
+      }
+    }
+
+    visited[best] = true;
+    order.push(best);
+    current = best;
+  }
+
+  return order;
+}
+
+// =====================================================
+// 4) DIRECTIONS API (multipoint, with steps)
+// =====================================================
+export async function fetchRouteGeoJSON(orderedCoords, accessToken, profile = "mapbox/driving") {
+  const coordStr = orderedCoords.map(c => c.join(",")).join(";");
+  const url = `https://api.mapbox.com/directions/v5/${profile}/${coordStr}?geometries=geojson&overview=full&steps=true&access_token=${encodeURIComponent(accessToken)}`;
+
+  const resp = await fetch(url);
+  const json = await resp.json();
+
+  if (!resp.ok || !json.routes?.[0]) {
+    throw new Error(`Directions error: ${resp.status} ${JSON.stringify(json)}`);
+  }
+
+  return json.routes[0];
+}
+
+// Direct route (user → start turbine)
+export async function fetchDirectRoute(originLngLat, destLngLat, accessToken, profile = "mapbox/driving") {
+  const coordStr = `${originLngLat[0]},${originLngLat[1]};${destLngLat[0]},${destLngLat[1]}`;
+  const url = `https://api.mapbox.com/directions/v5/${profile}/${coordStr}?geometries=geojson&overview=full&steps=true&access_token=${encodeURIComponent(accessToken)}`;
+
+  const resp = await fetch(url);
+  const json = await resp.json();
+
+  if (!resp.ok || !json.routes?.[0]) {
+    throw new Error(`Direct route error: ${resp.status} ${JSON.stringify(json)}`);
+  }
+
+  return json.routes[0];
+}
+
+// =====================================================
+// 5) MAP HELPERS
+// =====================================================
+export function drawRoute(map, routeGeometry, sourceId = "tspRoute", layerId = "tspRouteLine") {
+  if (map.getSource(sourceId)) {
+    map.getSource(sourceId).setData(routeGeometry);
+  } else {
+    map.addSource(sourceId, { type:"geojson", data:routeGeometry });
+    map.addLayer({
+      id: layerId,
+      type: "line",
+      source: sourceId,
+      layout: { "line-join":"round", "line-cap":"round" },
+      paint: { "line-color":"#ff6600", "line-width":5, "line-opacity":0.9 }
+    });
+  }
+}
+
+export function fitToRoute(map, routeGeometry, padding = 60) {
+  const coords = routeGeometry.coordinates;
+  const bounds = coords.reduce((b, c) => b.extend(c), new mapboxgl.LngLatBounds(coords[0], coords[0]));
+  map.fitBounds(bounds, { padding });
+}
+
+export function clearRoute(map, sourceId = "tspRoute", layerId = "tspRouteLine") {
+  if (map.getLayer(layerId)) map.removeLayer(layerId);
+  if (map.getSource(sourceId)) map.removeSource(sourceId);
+}
+
+// ===== 6) One-call orchestrator (site) =====
+// pointsObj = { name: [lng,lat], ... }
+export async function findBestRoute(pointsObj, accessToken, options = {}) {
+  const keys = Object.keys(pointsObj);
+  if (keys.length === 0) {
+    throw new Error("findBestRoute: pointsObj is empty");
+  }
+
+  const coords = keys.map(k => pointsObj[k]);
+
+  // -------- choose start index --------
+  let startIndex = 0;
+
+  // 1) Explicit turbine name wins
+  if (options.startKey && keys.includes(options.startKey)) {
+    startIndex = keys.indexOf(options.startKey);
+
+  // 2) Otherwise, if we have an origin coordinate, pick the nearest turbine
+  } else if (options.originLngLat && Array.isArray(options.originLngLat)) {
+    const [ox, oy] = options.originLngLat;
+    let bestIdx = 0;
+    let bestD2 = Infinity;
+    coords.forEach((c, i) => {
+      const dx = c[0] - ox;
+      const dy = c[1] - oy;
+      const d2 = dx * dx + dy * dy;
+      if (d2 < bestD2) {
+        bestD2 = d2;
+        bestIdx = i;
+      }
+    });
+    startIndex = bestIdx;
+
+  // 3) Fallback to your original behavior (O&M if present, else first key)
+  } else {
+    const defaultStartKey = keys.find(k => /o&m/i.test(k)) || keys[0];
+    startIndex = keys.indexOf(defaultStartKey);
+  }
+
+  // -------- run greedy TSP from chosen startIndex --------
+  const distances = await fetchDurationMatrix(coords, accessToken);
+  const orderIdx = greedyOrder(distances, startIndex);
+
+  const orderedKeys = orderIdx.map(i => keys[i]);
+  const orderedCoords = orderIdx.map(i => coords[i]);
+
+  const route = await fetchRouteGeoJSON(orderedCoords, accessToken);
+  return { keys: orderedKeys, coords: orderedCoords, route };
+}
+

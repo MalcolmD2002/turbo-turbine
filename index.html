@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Site Navigator — Select Site</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#0078ff">
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <style>
+    html,body{
+      height:100%;margin:0;
+      font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
+      display:flex;flex-direction:column;align-items:center;justify-content:center;
+      background:#f7f9fc;
+    }
+    h1{font-size:24px;margin-bottom:12px;}
+    select{
+      padding:10px 14px;font-size:16px;border-radius:8px;border:1px solid #ccc;
+      width:80%;max-width:400px;margin-bottom:20px;
+    }
+    button{
+      background:#0078ff;color:#fff;border:0;border-radius:8px;
+      padding:12px 20px;font-size:16px;font-weight:600;cursor:pointer;
+    }
+    #loader {
+      position: fixed; inset: 0;
+      display: flex; flex-direction: column; justify-content: center; align-items: center;
+      background: #fff; z-index: 9999;
+    }
+    .spinner {
+      width: 40px; height: 40px;
+      border: 4px solid #ccc; border-top: 4px solid #0078ff;
+      border-radius: 50%; animation: spin 1s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div id="loader">
+    <div class="spinner"></div>
+    <p>Loading…</p>
+  </div>
+
+  <h1>Select a Site</h1>
+  <select id="siteSelect"></select>
+  <button id="confirmSite">Confirm Selection</button>
+
+  <script type="module">
+    import { SITE_DATA } from './route-planner.js';
+    const sel = document.getElementById('siteSelect');
+    Object.keys(SITE_DATA).forEach(name=>{
+      const opt=document.createElement('option');
+      opt.value=name;opt.textContent=name;sel.appendChild(opt);
+    });
+    document.getElementById('confirmSite').addEventListener('click',()=>{
+      const siteName=sel.value;
+      localStorage.setItem('selectedSite',siteName);
+      window.location.href=`exclude.html?site=${encodeURIComponent(siteName)}`;
+    });
+    window.addEventListener("load",()=>document.getElementById("loader").style.display="none");
+  </script>
+
+  <script>
+    if ("serviceWorker" in navigator)
+      navigator.serviceWorker.register("./service-worker.js")
+        .then(()=>console.log("✅ SW registered"))
+        .catch(e=>console.error("SW fail:",e));
+  </script>
+</body>
+</html>
