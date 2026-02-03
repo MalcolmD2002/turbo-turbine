@@ -361,19 +361,49 @@ export async function fetchDirectRoute(originLngLat, destLngLat, accessToken, pr
 // 5) MAP HELPERS
 // =====================================================
 export function drawRoute(map, routeGeometry, sourceId = "tspRoute", layerId = "tspRouteLine") {
+  // We'll use two layers:
+  // - casing: layerId + "-casing"
+  // - core:   layerId + "-core"
+  const casingId = `${layerId}-casing`;
+  const coreId = `${layerId}-core`;
+
+  // Ensure source exists / updated
   if (map.getSource(sourceId)) {
     map.getSource(sourceId).setData(routeGeometry);
   } else {
-    map.addSource(sourceId, { type:"geojson", data:routeGeometry });
+    map.addSource(sourceId, { type: "geojson", data: routeGeometry });
+  }
+
+  // Add or update layers (casing below, core above)
+  if (!map.getLayer(casingId)) {
     map.addLayer({
-      id: layerId,
+      id: casingId,
       type: "line",
       source: sourceId,
-      layout: { "line-join":"round", "line-cap":"round" },
-      paint: { "line-color":"#ff6600", "line-width":5, "line-opacity":0.9 }
+      layout: { "line-join": "round", "line-cap": "round" },
+      paint: {
+        "line-color": "#ffffff",
+        "line-width": 10,
+        "line-opacity": 0.95
+      }
+    });
+  }
+
+  if (!map.getLayer(coreId)) {
+    map.addLayer({
+      id: coreId,
+      type: "line",
+      source: sourceId,
+      layout: { "line-join": "round", "line-cap": "round" },
+      paint: {
+        "line-color": "#0a84ff",
+        "line-width": 6,
+        "line-opacity": 0.95
+      }
     });
   }
 }
+
 
 export function fitToRoute(map, routeGeometry, padding = 60) {
   const coords = routeGeometry.coordinates;
@@ -435,4 +465,5 @@ export async function findBestRoute(pointsObj, accessToken, options = {}) {
   const route = await fetchRouteGeoJSON(orderedCoords, accessToken);
   return { keys: orderedKeys, coords: orderedCoords, route };
 }
+
 
