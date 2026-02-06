@@ -190,13 +190,6 @@ export const SITE_DATA = {
 		  "T136": [ -84.945, 43.715]
 		}
 },
-	
-"TEST": {
-    startKey: "O&M",
-    points: {
-      "O&M": [ -83.76395, 42.23168]
-    }
-  },
 
 "Heartland": {
 	StartKey: "O&M",
@@ -274,6 +267,72 @@ export const SITE_DATA = {
 		"T70": [ -84.736, 43.158],
 		"T71": [ -84.726, 43.158],
 		"T72": [ -84.722, 43.151]
+		}
+},
+
+"Wellsburg Wind": {
+	StartKey: "O&M",
+	points: {
+		"O&M": [ -92.923, 42.406],
+		"T1": [ -93.000, 42.429],
+		"T01A": [ -92.992, 42.454],
+		"T01B": [ -92.992, 42.447],
+		"T01C": [ -92.986, 42.447],
+		"T2": [ -92.996, 42.427],
+		"T02A": [ -92.993, 42.429],
+		"T3": [ -92.990, 42.427],
+		"T4": [ -92.984, 42.424],
+		"T04A": [ -92.979, 42.424],
+		"T5": [ -92.997, 42.418],
+		"T6": [ -92.993, 42.418],
+		"T8": [ -92.981, 42.420],
+		"T08A": [ -92.972, 42.425],
+		"T9": [ -92.972, 42.386],
+		"T11": [ -92.970, 42.412],
+		"T13": [ -92.962, 42.411],
+		"T14": [ -92.951, 42.407],
+		"T15": [ -92.935, 42.409],
+		"T17": [ -92.918, 42.411],
+		"T18": [ -92.912, 42.413],
+		"T24": [ -92.956, 42.401],
+		"T25": [ -92.953, 42.402],
+		"T26": [ -92.949, 42.401],
+		"T28": [ -92.970, 42.396],
+		"T31": [ -92.967, 42.391],
+		"T32": [ -92.954, 42.396],
+		"T33A": [ -92.940, 42.390],
+		"T34": [ -92.939, 42.385],
+		"T35": [ -92.935, 42.385],
+		"T35A": [ -92.933, 42.380],
+		"T35B": [ -92.931, 42.386],
+		"T36": [ -92.910, 42.382],
+		"T36A": [ -92.910, 42.377],
+		"T37": [ -92.968, 42.377],
+		"T37A": [ -92.966, 42.379],
+		"T38": [ -92.961, 42.385],
+		"T38A": [ -92.956, 42.387],
+		"T39": [ -92.954, 42.380],
+		"T39A": [ -92.956, 42.377],
+		"T40": [ -92.950, 42.381],
+		"T41": [ -92.946, 42.381],
+		"T42": [ -92.913, 42.380],
+		"T43": [ -92.973, 42.377],
+		"T44": [ -92.980, 42.374],
+		"T45": [ -92.997, 42.363],
+		"T45A": [ -93.000, 42.367],
+		"T46": [ -92.989, 42.363],
+		"T47": [ -92.985, 42.363],
+		"T48": [ -92.980, 42.360],
+		"T49": [ -92.975, 42.360],
+		"T50": [ -92.968, 42.363],
+		"T51": [ -92.964, 42.363],
+		"T52": [ -93.000, 42.357],
+		"T54": [ -92.990, 42.343],
+		"T55": [ -92.985, 42.343],
+		"T56": [ -92.980, 42.346],
+		"T57": [ -92.975, 42.346],
+		"T60": [ -92.961, 42.345],
+		"T61": [ -92.956, 42.345]
 		}
 }
 
@@ -368,49 +427,19 @@ export async function fetchDirectRoute(originLngLat, destLngLat, accessToken, pr
 // 5) MAP HELPERS
 // =====================================================
 export function drawRoute(map, routeGeometry, sourceId = "tspRoute", layerId = "tspRouteLine") {
-  // We'll use two layers:
-  // - casing: layerId + "-casing"
-  // - core:   layerId + "-core"
-  const casingId = `${layerId}-casing`;
-  const coreId = `${layerId}-core`;
-
-  // Ensure source exists / updated
   if (map.getSource(sourceId)) {
     map.getSource(sourceId).setData(routeGeometry);
   } else {
-    map.addSource(sourceId, { type: "geojson", data: routeGeometry });
-  }
-
-  // Add or update layers (casing below, core above)
-  if (!map.getLayer(casingId)) {
+    map.addSource(sourceId, { type:"geojson", data:routeGeometry });
     map.addLayer({
-      id: casingId,
+      id: layerId,
       type: "line",
       source: sourceId,
-      layout: { "line-join": "round", "line-cap": "round" },
-      paint: {
-        "line-color": "#ffffff",
-        "line-width": 10,
-        "line-opacity": 0.95
-      }
-    });
-  }
-
-  if (!map.getLayer(coreId)) {
-    map.addLayer({
-      id: coreId,
-      type: "line",
-      source: sourceId,
-      layout: { "line-join": "round", "line-cap": "round" },
-      paint: {
-        "line-color": "#0a84ff",
-        "line-width": 6,
-        "line-opacity": 0.95
-      }
+      layout: { "line-join":"round", "line-cap":"round" },
+      paint: { "line-color":"#ff6600", "line-width":5, "line-opacity":0.9 }
     });
   }
 }
-
 
 export function fitToRoute(map, routeGeometry, padding = 60) {
   const coords = routeGeometry.coordinates;
@@ -472,6 +501,4 @@ export async function findBestRoute(pointsObj, accessToken, options = {}) {
   const route = await fetchRouteGeoJSON(orderedCoords, accessToken);
   return { keys: orderedKeys, coords: orderedCoords, route };
 }
-
-
 
