@@ -534,13 +534,12 @@
     // --------------------------
     // STATE
     // --------------------------
-    let userPos = null;
-    let headingDeg = null;
+    let userPos = null;          // used for nav logic + UI distance calcs
+    let headingDeg = null;       // degrees 0..360
+    let arrowMapboxMarker = null;
 
     let followUser = true;
     let navActive = false;
-
-    let arrowMapboxMarker = null;
 
     let navRoute = null;
     let routeLine = null; // turf lineString
@@ -554,6 +553,12 @@
     let lastOffRouteCheck = 0;
     let offRouteStrikes = 0;
     let rerouteInProgress = false;
+
+    // Smoothing / animation state (visual-only)
+    let gpsTarget = null;      // latest raw fix [lng,lat]
+    let smoothPos = null;      // animated position [lng,lat]
+    let lastAnimT = 0;
+    let animStarted = false;
 
     // --------------------------
     // HELPERS
@@ -613,18 +618,59 @@
       return "⬆️";
     }
 
+    function norm360(d) {
+      d = d % 360;
+      return d < 0 ? d + 360 : d;
+    }
+
+    function applyHeadingToArrow() {
+      if (!arrowMapboxMarker || headingDeg == null) return;
+      arrowMapboxMarker.getElement().style.transform = `rotate(${headingDeg}deg)`;
+    }
+
+    async function enableHeadingSensorsIfNeeded() {
+      const DOE = window.DeviceOrientationEvent;
+      if (DOE && typeof DOE.requestPermission === "function") {
+        try {
+          const res = await DOE.requestPermission();
+          log("DeviceOrientation permission:", res);
+        } catch (e) {
+          err("DeviceOrientation permission error:", e);
+        }
+      }
+    }
+
+    function handleDeviceOrientation(e) {
+      let h = null;
+
+      // iOS Safari (most reliable when available)
+      if (typeof e.webkitCompassHeading === "number") {
+        h = e.webkitCompassHeading;
+      } else if (typeof e.alpha === "number") {
+        // Fallback – alpha is not perfect but better than nothing
+        h = e.alpha;
+      }
+
+      if (h != null) {
+        headingDeg = norm360(h);
+        applyHeadingToArrow();
+        // Make the nav feel responsive to heading changes even between GPS fixes
+        if (followUser) updateCamera();
+      }
+    }
+
     function leadPoint([lng, lat], bearingDeg, metersAhead = 60) {
-      // turf.destination expects distance in kilometers by default
       const pt = turf.point([lng, lat]);
       const dest = turf.destination(pt, metersAhead / 1000, bearingDeg, { units: "kilometers" });
       return dest.geometry.coordinates;
     }
 
-    function updateCamera() {
-      if (!followUser || !userPos) return;
+    function updateCamera(centerOverride = null) {
+      const pos = centerOverride || userPos;
+      if (!followUser || !pos) return;
 
       const bearing = (headingDeg != null) ? headingDeg : map.getBearing();
-      const center = leadPoint(userPos, bearing, 70); // puts puck lower on screen
+      const center = leadPoint(pos, bearing, 70); // puts puck lower on screen
 
       map.easeTo({
         center,
@@ -634,6 +680,39 @@
         duration: 250,
         easing: t => t
       });
+    }
+
+    // Smooth animation loop (visual-only). Nav logic stays on raw GPS.
+    function lerp(a, b, t) { return a + (b - a) * t; }
+
+    function animate(t) {
+      if (!animStarted) return;
+
+      if (!lastAnimT) lastAnimT = t;
+      const dt = (t - lastAnimT) / 1000;
+      lastAnimT = t;
+
+      if (gpsTarget) {
+        if (!smoothPos) smoothPos = gpsTarget.slice();
+
+        // Exponential smoothing factor (tuned to feel "Apple-ish")
+        const k = 1 - Math.pow(0.001, dt);
+
+        smoothPos = [
+          lerp(smoothPos[0], gpsTarget[0], k),
+          lerp(smoothPos[1], gpsTarget[1], k)
+        ];
+
+        if (arrowMapboxMarker) {
+          arrowMapboxMarker.setLngLat(smoothPos);
+          applyHeadingToArrow();
+        }
+
+        // Use smoothPos for camera to reduce jerkiness
+        if (followUser) updateCamera(smoothPos);
+      }
+
+      requestAnimationFrame(animate);
     }
 
     function updateNavUI() {
@@ -741,7 +820,6 @@
     function metersOffRoute(routeLine, userPos) {
       if (!routeLine || !userPos) return 0;
       const snapped = turf.nearestPointOnLine(routeLine, turf.point(userPos), { units: "meters" });
-      // Turf returns distance as snapped.properties.dist in given units
       return snapped?.properties?.dist ?? 0;
     }
 
@@ -755,7 +833,6 @@
 
       const offM = metersOffRoute(routeLine, userPos);
 
-      // Tune this threshold based on your sites/roads. 45–80m is typical.
       if (offM > 60) {
         offRouteStrikes++;
       } else {
@@ -914,9 +991,6 @@
       if (arrowMapboxMarker)
         arrowMapboxMarker.getElement().classList.add("arrow-active");
 
-      // Put the map into “navigation mode”
-      updateCamera();
-
       updateNavUI();
     }
 
@@ -952,6 +1026,13 @@
       }
 
       try {
+        // Ask for heading permissions on iOS while we still have a user gesture
+        await enableHeadingSensorsIfNeeded();
+
+        // Attach both orientation events; whichever works will update headingDeg
+        window.addEventListener("deviceorientationabsolute", handleDeviceOrientation, true);
+        window.addEventListener("deviceorientation", handleDeviceOrientation, true);
+
         await new Promise(res => setTimeout(res, 50));
 
         navigator.geolocation.getCurrentPosition(async pos => {
@@ -965,6 +1046,9 @@
             log("GPS OK:", userPos.toString());
           }
 
+          gpsTarget = userPos.slice();
+          smoothPos = userPos.slice();
+
           // Arrow marker
           const el = document.createElement("div");
           el.className = "arrow-marker";
@@ -972,18 +1056,39 @@
             .setLngLat(userPos)
             .addTo(map);
 
-          // Move map to nav mode immediately
+          // Initial camera
           map.jumpTo({ center: userPos, zoom: 16, pitch: 55, bearing: headingDeg ?? 0 });
+          applyHeadingToArrow();
+
+          // Start smoothing loop once
+          if (!animStarted) {
+            animStarted = true;
+            requestAnimationFrame(animate);
+          }
 
           // Start full live watch
           navigator.geolocation.watchPosition(p => {
-            userPos = [p.coords.longitude, p.coords.latitude];
+            const newPos = [p.coords.longitude, p.coords.latitude];
 
-            if (arrowMapboxMarker) {
-              arrowMapboxMarker.setLngLat(userPos);
-              if (headingDeg !== null)
-                arrowMapboxMarker.getElement().style.transform = `rotate(${headingDeg}deg)`;
+            //_toggle between real GPS and debug override
+            if (urlOverrideStart) {
+              userPos = urlOverrideStart.slice();
+            } else {
+              userPos = newPos;
             }
+
+            // Keep latest raw fix for smoothing
+            gpsTarget = userPos.slice();
+
+            // Use GPS heading when moving (more reliable than sensors while driving)
+            const gpsHeading = p.coords.heading;
+            const gpsSpeed = p.coords.speed;
+            if (typeof gpsHeading === "number" && gpsSpeed != null && gpsSpeed > 1.0) {
+              headingDeg = norm360(gpsHeading);
+            }
+
+            // Always apply heading if we have it
+            applyHeadingToArrow();
 
             if (navActive) {
               maybeAdvanceStep();
@@ -991,24 +1096,21 @@
               maybeReroute();
             }
 
-            updateCamera();
+            // Camera is handled smoothly in the animation loop (but keep one call for immediate response)
+            if (!animStarted && followUser) updateCamera();
 
           }, e => err("watchPosition:", e.message), {
             enableHighAccuracy: true,
-            maximumAge: 0
-          });
-
-          // Heading listener
-          window.addEventListener("deviceorientationabsolute", e => {
-            if (e.alpha != null) {
-              headingDeg = e.alpha;
-              if (arrowMapboxMarker)
-                arrowMapboxMarker.getElement().style.transform = `rotate(${headingDeg}deg)`;
-            }
+            maximumAge: 0,
+            timeout: 20000
           });
 
           gpsOverlay.style.display = "none";
           await buildRouteFromUser();
+
+          // Put map into nav mode immediately after we have a route
+          navActive = true;
+          updateCamera();
 
         }, error => {
           err("GPS initial error:", error.message);
@@ -1031,7 +1133,7 @@
     recenterFab.addEventListener("click", () => {
       followUser = true;
       recenterFab.style.display = "none";
-      updateCamera();
+      updateCamera(smoothPos || userPos);
     });
 
   </script>
