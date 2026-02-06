@@ -297,9 +297,7 @@
       margin-left: 6px;
     }
 
-    /* Arrow marker:
-       IMPORTANT: Mapbox uses transform on the OUTER element to position it.
-       So we rotate ONLY the INNER child (.arrow-rotor). */
+    /* Arrow marker: rotate inner child only */
     .arrow-marker {
       width: 28px;
       height: 28px;
@@ -350,12 +348,10 @@
 
   <div id="map"></div>
 
-  <!-- GPS Overlay -->
   <div id="enableGPS">
     <button id="btnEnableGPS">Enable GPS</button>
   </div>
 
-  <!-- Top card -->
   <div id="topCard">
     <div id="instructionCard">
       <div id="maneuverIcon">⬆️</div>
@@ -367,7 +363,6 @@
     <div id="maneuverThen">Then: —</div>
   </div>
 
-  <!-- Bottom: Trip strip + expandable steps list -->
   <div id="bottomSheet">
     <div id="tripStrip">
       <div id="grabArea" title="Tap to show steps">
@@ -403,7 +398,6 @@
 
   <div id="recenterFab"></div>
 
-  <!-- Logger (GitHub Pages-safe) -->
   <script>
     const CAN_SERVER_LOG =
       location.hostname === "localhost" ||
@@ -419,18 +413,10 @@
       }).catch(() => {});
     }
 
-    const log = (...a) => {
-      console.log(...a);
-      logToServer("LOG", a.join(" "));
-    };
-
-    const err = (...a) => {
-      console.error(...a);
-      logToServer("ERROR", a.join(" "));
-    };
+    const log = (...a) => { console.log(...a); logToServer("LOG", a.join(" ")); };
+    const err = (...a) => { console.error(...a); logToServer("ERROR", a.join(" ")); };
   </script>
 
-  <!-- MAIN NAVIGATION LOGIC -->
   <script type="module">
     import {
       SITE_DATA,
@@ -453,7 +439,6 @@
 
       const lng = parseFloat(parts[0]);
       const lat = parseFloat(parts[1]);
-
       if (isNaN(lng) || isNaN(lat)) return null;
 
       log("⚠ URL Override: Using custom start:", lng, lat);
@@ -462,7 +447,6 @@
 
     const urlOverrideStart = getURLOverrideStart();
 
-    // LOAD SITE + EXCLUSIONS
     const siteName = localStorage.getItem("selectedSite");
     const excluded = JSON.parse(localStorage.getItem("excludedTurbines") || "[]");
 
@@ -486,14 +470,10 @@
     log("Selected site:", siteName);
     log("Included turbines:", stopNames.join(", "));
 
-    // MAP INIT
     mapboxgl.accessToken = "pk.eyJ1IjoieW91cmVsZGVyIiwiYSI6ImNtaDhxZHg1bTAxeWkyaXB5aTAyM2ZyY3gifQ.pkTMlQzTDcgl2pvIGyP1Jw";
 
     let avgLng = 0, avgLat = 0;
-    stopNames.forEach(n => {
-      avgLng += points[n][0];
-      avgLat += points[n][1];
-    });
+    stopNames.forEach(n => { avgLng += points[n][0]; avgLat += points[n][1]; });
     avgLng /= stopNames.length;
     avgLat /= stopNames.length;
 
@@ -506,7 +486,6 @@
 
     map.on("load", () => log("Map loaded"));
 
-    // DOM
     const gpsOverlay = document.getElementById("enableGPS");
     const btnEnableGPS = document.getElementById("btnEnableGPS");
 
@@ -535,7 +514,7 @@
     let navActive = false;
 
     let arrowMapboxMarker = null;
-    let arrowRotorEl = null;     // INNER child that we rotate
+    let arrowRotorEl = null;
 
     let navRoute = null;
     let routeLine = null;
@@ -550,11 +529,14 @@
     let offRouteStrikes = 0;
     let rerouteInProgress = false;
 
-    // Smoothing state (visual-only)
+    // Smoothing state
     let gpsTarget = null;
     let smoothPos = null;
     let lastAnimT = 0;
     let animStarted = false;
+
+    // When user interacts with map, freeze smoothing to avoid “float”
+    let freezeMarker = false;
 
     // HELPERS
     function miles(meters) { return meters / METERS_PER_MILE; }
@@ -582,9 +564,7 @@
 
     function flattenSteps(route) {
       const out = [];
-      for (const leg of route.legs || []) {
-        for (const s of leg.steps || []) out.push(s);
-      }
+      for (const leg of route.legs || []) for (const s of leg.steps || []) out.push(s);
       return out;
     }
 
@@ -598,8 +578,7 @@
         return "↩️";
       }
       if (type === "merge") return "↗️";
-      if (type === "roundabout") return "⭕";
-      if (type === "rotary") return "⭕";
+      if (type === "roundabout" || type === "rotary") return "⭕";
       if (type === "fork") {
         if (mod.includes("left")) return "↖️";
         if (mod.includes("right")) return "↗️";
@@ -616,17 +595,15 @@
       return d < 0 ? d + 360 : d;
     }
 
-    // CRITICAL: rotate inner rotor by (heading - mapBearing)
     function applyHeadingToArrow() {
       if (!arrowRotorEl) return;
 
-      // If we don't have a heading, keep arrow pointing "up" relative to map
       if (headingDeg == null) {
         arrowRotorEl.style.transform = `rotate(0deg)`;
         return;
       }
 
-      const mapBearing = map.getBearing(); // degrees clockwise from north
+      const mapBearing = map.getBearing();
       const rot = norm360(headingDeg - mapBearing);
       arrowRotorEl.style.transform = `rotate(${rot}deg)`;
     }
@@ -645,13 +622,8 @@
 
     function handleDeviceOrientation(e) {
       let h = null;
-
-      // iOS Safari: webkitCompassHeading is degrees clockwise from true north
-      if (typeof e.webkitCompassHeading === "number") {
-        h = e.webkitCompassHeading;
-      } else if (typeof e.alpha === "number") {
-        h = e.alpha;
-      }
+      if (typeof e.webkitCompassHeading === "number") h = e.webkitCompassHeading;
+      else if (typeof e.alpha === "number") h = e.alpha;
 
       if (h != null) {
         headingDeg = norm360(h);
@@ -683,9 +655,27 @@
       });
     }
 
-    // Keep arrow correct whenever map bearing changes (manual rotate OR recenter easing)
     map.on("rotate", applyHeadingToArrow);
     map.on("pitch", applyHeadingToArrow);
+
+    // ===== NEW: along-route distance to maneuver (prevents “counting up” off-route) =====
+    function distanceAlongRouteMeters(line, userLngLat, maneuverLngLat) {
+      if (!line || !userLngLat || !maneuverLngLat) return null;
+
+      const userSnap = turf.nearestPointOnLine(line, turf.point(userLngLat), { units: "meters" });
+      const manSnap  = turf.nearestPointOnLine(line, turf.point(maneuverLngLat), { units: "meters" });
+
+      const userD = userSnap?.properties?.location;
+      const manD  = manSnap?.properties?.location;
+
+      if (!Number.isFinite(userD) || !Number.isFinite(manD)) return null;
+
+      // If user is past the maneuver along the route, do not let distance increase
+      if (userD >= manD) return 0;
+
+      const slice = turf.lineSliceAlong(line, userD, manD, { units: "meters" });
+      return turf.length(slice, { units: "meters" });
+    }
 
     // Smooth animation loop
     function lerp(a, b, t) { return a + (b - a) * t; }
@@ -697,6 +687,15 @@
       const dt = (t - lastAnimT) / 1000;
       lastAnimT = t;
 
+      // If user is interacting with map, do NOT keep easing marker toward gpsTarget
+      // This removes the “float away then settle” effect.
+      if (freezeMarker) {
+        if (arrowMapboxMarker && userPos) arrowMapboxMarker.setLngLat(userPos);
+        applyHeadingToArrow();
+        requestAnimationFrame(animate);
+        return;
+      }
+
       if (gpsTarget) {
         if (!smoothPos) smoothPos = gpsTarget.slice();
 
@@ -706,11 +705,8 @@
           lerp(smoothPos[1], gpsTarget[1], k)
         ];
 
-        if (arrowMapboxMarker) {
-          arrowMapboxMarker.setLngLat(smoothPos);
-        }
+        if (arrowMapboxMarker) arrowMapboxMarker.setLngLat(smoothPos);
 
-        // Apply heading every frame so it stays correct while map rotates/eases
         applyHeadingToArrow();
 
         if (followUser) updateCamera(smoothPos);
@@ -728,9 +724,15 @@
       maneuverIconEl.textContent = maneuverEmoji(maneuver);
       maneuverInstructionEl.textContent = maneuver.instruction || maneuver.type || "Continue";
 
+      // ===== UPDATED: distance to maneuver uses along-route distance (fallback to straight-line) =====
       if (userPos && maneuver.location) {
-        const dMi = turf.distance(turf.point(userPos), turf.point(maneuver.location), { units: "miles" });
-        maneuverDistanceEl.textContent = formatMiles(dMi);
+        const dM = distanceAlongRouteMeters(routeLine, userPos, maneuver.location);
+        if (Number.isFinite(dM)) {
+          maneuverDistanceEl.textContent = formatMiles(miles(dM));
+        } else {
+          const dMi = turf.distance(turf.point(userPos), turf.point(maneuver.location), { units: "miles" });
+          maneuverDistanceEl.textContent = formatMiles(dMi);
+        }
       } else {
         maneuverDistanceEl.textContent = "—";
       }
@@ -739,8 +741,7 @@
       const nextInstr = next?.maneuver?.instruction || next?.maneuver?.type || "—";
       maneuverThenEl.textContent = `Then: ${nextInstr}`;
 
-      let remMeters = 0;
-      let remSeconds = 0;
+      let remMeters = 0, remSeconds = 0;
       for (let i = stepIdx; i < steps.length; i++) {
         remMeters += steps[i].distance || 0;
         remSeconds += steps[i].duration || 0;
@@ -756,10 +757,7 @@
     }
 
     function renderStepsList() {
-      if (!steps.length) {
-        stepsListEl.innerHTML = "";
-        return;
-      }
+      if (!steps.length) { stepsListEl.innerHTML = ""; return; }
 
       const start = Math.max(0, stepIdx - 1);
       const end = Math.min(steps.length, stepIdx + 9);
@@ -818,9 +816,9 @@
       }
     }
 
-    function metersOffRoute(routeLine, userPos) {
-      if (!routeLine || !userPos) return 0;
-      const snapped = turf.nearestPointOnLine(routeLine, turf.point(userPos), { units: "meters" });
+    function metersOffRoute(line, pos) {
+      if (!line || !pos) return 0;
+      const snapped = turf.nearestPointOnLine(line, turf.point(pos), { units: "meters" });
       return snapped?.properties?.dist ?? 0;
     }
 
@@ -843,6 +841,11 @@
         try {
           log("Off-route detected. Rerouting…");
           await buildRouteFromUser();
+
+          // ===== NEW: hard reset UI after reroute so we never show stale step distance =====
+          stepIdx = 0;
+          updateNavUI();
+
         } catch (e) {
           err("Reroute failed:", e?.message || e);
         } finally {
@@ -923,9 +926,7 @@
       for (let i = 0; i < n; i++) subMatrix[i][i] = 0;
 
       const blocks = [];
-      for (let i = 0; i < n; i += BLOCK) {
-        blocks.push([...Array(Math.min(BLOCK, n - i)).keys()].map(k => i + k));
-      }
+      for (let i = 0; i < n; i += BLOCK) blocks.push([...Array(Math.min(BLOCK, n - i)).keys()].map(k => i + k));
 
       for (const A of blocks) {
         for (const B of blocks) {
@@ -968,26 +969,25 @@
 
       navActive = true;
       followUser = true;
+      freezeMarker = false; // ensure marker smoothing is active in nav mode
       recenterFab.style.display = "none";
 
       if (arrowMapboxMarker) arrowMapboxMarker.getElement().classList.add("arrow-active");
 
       updateNavUI();
 
-      // In nav mode, keep map bearing aligned to heading when available
       if (headingDeg != null) updateCamera(smoothPos || userPos);
     }
 
-    // Bottom sheet expand/collapse
     grabArea.addEventListener("click", () => {
       bottomSheet.classList.toggle("expanded");
     });
 
-    // End
     btnEnd.addEventListener("click", (e) => {
       e.stopPropagation();
       navActive = false;
       followUser = false;
+      freezeMarker = false;
 
       if (arrowMapboxMarker) arrowMapboxMarker.getElement().classList.remove("arrow-active");
 
@@ -995,7 +995,30 @@
       window.location.href = "index.html";
     });
 
-    // GPS ENABLE FLOW
+    // ===== NEW: freeze marker during user interaction to eliminate “float” =====
+    function onUserInteractStart() {
+      followUser = false;
+      freezeMarker = true;
+
+      // nail marker to true GPS immediately
+      if (arrowMapboxMarker && userPos) arrowMapboxMarker.setLngLat(userPos);
+
+      recenterFab.style.display = "flex";
+    }
+
+    map.on("dragstart", onUserInteractStart);
+    map.on("rotatestart", onUserInteractStart);
+    map.on("pitchstart", onUserInteractStart);
+    map.on("zoomstart", onUserInteractStart);
+
+    recenterFab.addEventListener("click", () => {
+      followUser = true;
+      freezeMarker = false; // resume smoothing
+      recenterFab.style.display = "none";
+      updateCamera(smoothPos || userPos);
+      applyHeadingToArrow();
+    });
+
     btnEnableGPS.addEventListener("click", async () => {
       log("Enable GPS clicked");
 
@@ -1020,19 +1043,15 @@
           gpsTarget = userPos.slice();
           smoothPos = userPos.slice();
 
-          // Build marker element with inner rotor
           const el = document.createElement("div");
           el.className = "arrow-marker";
 
           const rotor = document.createElement("div");
           rotor.className = "arrow-rotor";
           el.appendChild(rotor);
-
           arrowRotorEl = rotor;
 
-          arrowMapboxMarker = new mapboxgl.Marker(el)
-            .setLngLat(userPos)
-            .addTo(map);
+          arrowMapboxMarker = new mapboxgl.Marker(el).setLngLat(userPos).addTo(map);
 
           map.jumpTo({ center: userPos, zoom: 16, pitch: 55, bearing: headingDeg ?? 0 });
           applyHeadingToArrow();
@@ -1046,16 +1065,18 @@
             const newPos = [p.coords.longitude, p.coords.latitude];
             userPos = urlOverrideStart ? urlOverrideStart.slice() : newPos;
 
+            // Update target regardless; smoothing may be frozen (user panning)
             gpsTarget = userPos.slice();
 
-            // Prefer GPS heading when moving (best for driving)
+            // If user is panning, keep marker nailed to true GPS, not smoothed pos
+            if (freezeMarker && arrowMapboxMarker) arrowMapboxMarker.setLngLat(userPos);
+
             const gpsHeading = p.coords.heading;
             const gpsSpeed = p.coords.speed;
             if (typeof gpsHeading === "number" && gpsSpeed != null && gpsSpeed > 1.0) {
               headingDeg = norm360(gpsHeading);
             }
 
-            // Keep arrow correct immediately
             applyHeadingToArrow();
 
             if (navActive) {
@@ -1080,19 +1101,6 @@
       } catch (e) {
         err("Enable GPS exception:", e);
       }
-    });
-
-    // RECENTER FAB
-    map.on("dragstart", () => {
-      followUser = false;
-      recenterFab.style.display = "flex";
-    });
-
-    recenterFab.addEventListener("click", () => {
-      followUser = true;
-      recenterFab.style.display = "none";
-      updateCamera(smoothPos || userPos);
-      applyHeadingToArrow();
     });
 
   </script>
