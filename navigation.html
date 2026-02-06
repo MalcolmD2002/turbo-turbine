@@ -219,8 +219,6 @@
       box-shadow: var(--shadow);
       backdrop-filter: blur(10px);
       overflow: hidden;
-
-      /* collapsed by default */
       max-height: 0px;
       transition: max-height 220ms ease;
     }
@@ -299,8 +297,15 @@
       margin-left: 6px;
     }
 
-    /* Arrow marker */
+    /* Arrow marker:
+       IMPORTANT: Mapbox uses transform on the OUTER element to position it.
+       So we rotate ONLY the INNER child (.arrow-rotor). */
     .arrow-marker {
+      width: 28px;
+      height: 28px;
+      position: relative;
+    }
+    .arrow-rotor {
       width: 28px;
       height: 28px;
       background: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><polygon points="50,0 90,100 50,80 10,100" fill="%230078ff"/></svg>');
@@ -308,8 +313,9 @@
       background-repeat: no-repeat;
       transform-origin: center center;
       transition: transform .07s linear;
+      will-change: transform;
     }
-    .arrow-active {
+    .arrow-active .arrow-rotor {
       filter: hue-rotate(90deg) brightness(1.3);
     }
 
@@ -438,9 +444,6 @@
 
     log("navigation.html loaded");
 
-    //----------------------------------------------------
-    // URL Override — allows ?start=lng,lat for debugging
-    //----------------------------------------------------
     function getURLOverrideStart() {
       const params = new URLSearchParams(window.location.search);
       if (!params.has("start")) return null;
@@ -459,9 +462,7 @@
 
     const urlOverrideStart = getURLOverrideStart();
 
-    // --------------------------
     // LOAD SITE + EXCLUSIONS
-    // --------------------------
     const siteName = localStorage.getItem("selectedSite");
     const excluded = JSON.parse(localStorage.getItem("excludedTurbines") || "[]");
 
@@ -485,12 +486,9 @@
     log("Selected site:", siteName);
     log("Included turbines:", stopNames.join(", "));
 
-    // --------------------------
     // MAP INIT
-    // --------------------------
     mapboxgl.accessToken = "pk.eyJ1IjoieW91cmVsZGVyIiwiYSI6ImNtaDhxZHg1bTAxeWkyaXB5aTAyM2ZyY3gifQ.pkTMlQzTDcgl2pvIGyP1Jw";
 
-    // Center on average of site turbines initially
     let avgLng = 0, avgLat = 0;
     stopNames.forEach(n => {
       avgLng += points[n][0];
@@ -508,9 +506,7 @@
 
     map.on("load", () => log("Map loaded"));
 
-    // --------------------------
     // DOM
-    // --------------------------
     const gpsOverlay = document.getElementById("enableGPS");
     const btnEnableGPS = document.getElementById("btnEnableGPS");
 
@@ -531,22 +527,22 @@
 
     const recenterFab = document.getElementById("recenterFab");
 
-    // --------------------------
     // STATE
-    // --------------------------
-    let userPos = null;          // used for nav logic + UI distance calcs
-    let headingDeg = null;       // degrees 0..360
-    let arrowMapboxMarker = null;
+    let userPos = null;          // raw GPS pos used for nav logic + UI calcs
+    let headingDeg = null;       // 0..360 true heading when available
 
     let followUser = true;
     let navActive = false;
 
+    let arrowMapboxMarker = null;
+    let arrowRotorEl = null;     // INNER child that we rotate
+
     let navRoute = null;
-    let routeLine = null; // turf lineString
+    let routeLine = null;
     let steps = [];
     let stepIdx = 0;
 
-    const MANEUVER_RADIUS_M = 18;  // slightly more forgiving
+    const MANEUVER_RADIUS_M = 18;
     const METERS_PER_MILE = 1609.344;
 
     // Off-route reroute
@@ -554,15 +550,13 @@
     let offRouteStrikes = 0;
     let rerouteInProgress = false;
 
-    // Smoothing / animation state (visual-only)
-    let gpsTarget = null;      // latest raw fix [lng,lat]
-    let smoothPos = null;      // animated position [lng,lat]
+    // Smoothing state (visual-only)
+    let gpsTarget = null;
+    let smoothPos = null;
     let lastAnimT = 0;
     let animStarted = false;
 
-    // --------------------------
     // HELPERS
-    // --------------------------
     function miles(meters) { return meters / METERS_PER_MILE; }
 
     function formatMiles(mi) {
@@ -594,7 +588,6 @@
       return out;
     }
 
-    // Emoji maneuver icon mapper (placeholder; swap to SVG later)
     function maneuverEmoji(m) {
       const type = (m?.type || "").toLowerCase();
       const mod = (m?.modifier || "").toLowerCase();
@@ -623,9 +616,19 @@
       return d < 0 ? d + 360 : d;
     }
 
+    // CRITICAL: rotate inner rotor by (heading - mapBearing)
     function applyHeadingToArrow() {
-      if (!arrowMapboxMarker || headingDeg == null) return;
-      arrowMapboxMarker.getElement().style.transform = `rotate(${headingDeg}deg)`;
+      if (!arrowRotorEl) return;
+
+      // If we don't have a heading, keep arrow pointing "up" relative to map
+      if (headingDeg == null) {
+        arrowRotorEl.style.transform = `rotate(0deg)`;
+        return;
+      }
+
+      const mapBearing = map.getBearing(); // degrees clockwise from north
+      const rot = norm360(headingDeg - mapBearing);
+      arrowRotorEl.style.transform = `rotate(${rot}deg)`;
     }
 
     async function enableHeadingSensorsIfNeeded() {
@@ -643,19 +646,17 @@
     function handleDeviceOrientation(e) {
       let h = null;
 
-      // iOS Safari (most reliable when available)
+      // iOS Safari: webkitCompassHeading is degrees clockwise from true north
       if (typeof e.webkitCompassHeading === "number") {
         h = e.webkitCompassHeading;
       } else if (typeof e.alpha === "number") {
-        // Fallback – alpha is not perfect but better than nothing
         h = e.alpha;
       }
 
       if (h != null) {
         headingDeg = norm360(h);
         applyHeadingToArrow();
-        // Make the nav feel responsive to heading changes even between GPS fixes
-        if (followUser) updateCamera();
+        if (followUser) updateCamera(smoothPos || userPos);
       }
     }
 
@@ -670,7 +671,7 @@
       if (!followUser || !pos) return;
 
       const bearing = (headingDeg != null) ? headingDeg : map.getBearing();
-      const center = leadPoint(pos, bearing, 70); // puts puck lower on screen
+      const center = leadPoint(pos, bearing, 70);
 
       map.easeTo({
         center,
@@ -682,7 +683,11 @@
       });
     }
 
-    // Smooth animation loop (visual-only). Nav logic stays on raw GPS.
+    // Keep arrow correct whenever map bearing changes (manual rotate OR recenter easing)
+    map.on("rotate", applyHeadingToArrow);
+    map.on("pitch", applyHeadingToArrow);
+
+    // Smooth animation loop
     function lerp(a, b, t) { return a + (b - a) * t; }
 
     function animate(t) {
@@ -695,9 +700,7 @@
       if (gpsTarget) {
         if (!smoothPos) smoothPos = gpsTarget.slice();
 
-        // Exponential smoothing factor (tuned to feel "Apple-ish")
         const k = 1 - Math.pow(0.001, dt);
-
         smoothPos = [
           lerp(smoothPos[0], gpsTarget[0], k),
           lerp(smoothPos[1], gpsTarget[1], k)
@@ -705,10 +708,11 @@
 
         if (arrowMapboxMarker) {
           arrowMapboxMarker.setLngLat(smoothPos);
-          applyHeadingToArrow();
         }
 
-        // Use smoothPos for camera to reduce jerkiness
+        // Apply heading every frame so it stays correct while map rotates/eases
+        applyHeadingToArrow();
+
         if (followUser) updateCamera(smoothPos);
       }
 
@@ -724,7 +728,6 @@
       maneuverIconEl.textContent = maneuverEmoji(maneuver);
       maneuverInstructionEl.textContent = maneuver.instruction || maneuver.type || "Continue";
 
-      // Distance to current maneuver
       if (userPos && maneuver.location) {
         const dMi = turf.distance(turf.point(userPos), turf.point(maneuver.location), { units: "miles" });
         maneuverDistanceEl.textContent = formatMiles(dMi);
@@ -732,12 +735,10 @@
         maneuverDistanceEl.textContent = "—";
       }
 
-      // "Then" line (next step preview)
       const next = steps[Math.min(stepIdx + 1, steps.length - 1)];
       const nextInstr = next?.maneuver?.instruction || next?.maneuver?.type || "—";
       maneuverThenEl.textContent = `Then: ${nextInstr}`;
 
-      // Remaining
       let remMeters = 0;
       let remSeconds = 0;
       for (let i = stepIdx; i < steps.length; i++) {
@@ -828,16 +829,13 @@
       if (rerouteInProgress) return;
 
       const now = Date.now();
-      if (now - lastOffRouteCheck < 2500) return; // throttle checks
+      if (now - lastOffRouteCheck < 2500) return;
       lastOffRouteCheck = now;
 
       const offM = metersOffRoute(routeLine, userPos);
 
-      if (offM > 60) {
-        offRouteStrikes++;
-      } else {
-        offRouteStrikes = Math.max(0, offRouteStrikes - 1);
-      }
+      if (offM > 60) offRouteStrikes++;
+      else offRouteStrikes = Math.max(0, offRouteStrikes - 1);
 
       if (offRouteStrikes >= 3) {
         offRouteStrikes = 0;
@@ -853,16 +851,12 @@
       }
     }
 
-    // ---- Route length helper (for 2-opt) ----
     function routeLength(order, mat) {
       let sum = 0;
-      for (let i = 0; i < order.length - 1; i++) {
-        sum += mat[order[i]][order[i + 1]];
-      }
+      for (let i = 0; i < order.length - 1; i++) sum += mat[order[i]][order[i + 1]];
       return sum;
     }
 
-    // ---- 2-opt heuristic to improve the greedy TSP order ----
     function twoOpt(order, mat) {
       const n = order.length;
       let bestOrder = order.slice();
@@ -889,9 +883,6 @@
       return bestOrder;
     }
 
-    // --------------------------
-    // ROUTE BUILDER
-    // --------------------------
     async function buildRouteFromUser() {
       if (!userPos) throw new Error("User location not ready");
 
@@ -899,11 +890,10 @@
       const coordsAll = keysAll.map(k => points[k]);
       const N = coordsAll.length;
 
-      const MAX_TURBINES = 24;     // user + 24 = 25 coords cap
-      const CHUNK = 24;            // for user->turbine one-to-many calls
-      const BLOCK = 12;            // for turbine<->turbine blocks: 12+12=24 < 25
+      const MAX_TURBINES = 24;
+      const CHUNK = 24;
+      const BLOCK = 12;
 
-      // A) USER -> TURBINE distances (chunked)
       const userToAll = [];
       for (let i = 0; i < N; i += CHUNK) {
         const chunkKeys = keysAll.slice(i, i + CHUNK);
@@ -921,7 +911,6 @@
 
       reachable.sort((a, b) => a.dist - b.dist);
 
-      // B) Choose closest turbines
       const chosen = reachable.slice(0, Math.min(MAX_TURBINES, reachable.length));
       const keys = chosen.map(x => x.key);
       const turbineCoords = chosen.map(x => x.coord);
@@ -930,7 +919,6 @@
       const bestFirstIdx = 0;
       log("First turbine (by road):", keys[bestFirstIdx], `(${(chosen[0].dist / 1609.344).toFixed(2)} mi)`);
 
-      // C) turbine-only submatrix via chunked block calls
       const subMatrix = Array.from({ length: n }, () => Array(n).fill(Infinity));
       for (let i = 0; i < n; i++) subMatrix[i][i] = 0;
 
@@ -953,7 +941,6 @@
         }
       }
 
-      // D) Greedy + 2-opt
       let orderIdx = greedyOrder(subMatrix, bestFirstIdx);
       orderIdx = twoOpt(orderIdx, subMatrix);
 
@@ -963,17 +950,12 @@
       const allCoords = [userPos, ...orderedCoords];
       log("Route order (TSP):", orderedNames.join(" → "));
 
-      // E) Directions
       navRoute = await fetchRouteGeoJSON(allCoords, mapboxgl.accessToken);
       steps = flattenSteps(navRoute);
 
-      // Keep a turf line for off-route checks
       try {
-        if (navRoute?.geometry?.type === "LineString") {
-          routeLine = turf.lineString(navRoute.geometry.coordinates);
-        } else {
-          routeLine = null;
-        }
+        if (navRoute?.geometry?.type === "LineString") routeLine = turf.lineString(navRoute.geometry.coordinates);
+        else routeLine = null;
       } catch {
         routeLine = null;
       }
@@ -988,35 +970,32 @@
       followUser = true;
       recenterFab.style.display = "none";
 
-      if (arrowMapboxMarker)
-        arrowMapboxMarker.getElement().classList.add("arrow-active");
+      if (arrowMapboxMarker) arrowMapboxMarker.getElement().classList.add("arrow-active");
 
       updateNavUI();
+
+      // In nav mode, keep map bearing aligned to heading when available
+      if (headingDeg != null) updateCamera(smoothPos || userPos);
     }
 
-    // --------------------------
     // Bottom sheet expand/collapse
-    // --------------------------
     grabArea.addEventListener("click", () => {
       bottomSheet.classList.toggle("expanded");
     });
 
-    // Prevent End button from toggling sheet
+    // End
     btnEnd.addEventListener("click", (e) => {
       e.stopPropagation();
       navActive = false;
       followUser = false;
 
-      if (arrowMapboxMarker)
-        arrowMapboxMarker.getElement().classList.remove("arrow-active");
+      if (arrowMapboxMarker) arrowMapboxMarker.getElement().classList.remove("arrow-active");
 
       clearRoute(map, "navRoute", "navRouteLine");
       window.location.href = "index.html";
     });
 
-    // --------------------------
     // GPS ENABLE FLOW
-    // --------------------------
     btnEnableGPS.addEventListener("click", async () => {
       log("Enable GPS clicked");
 
@@ -1026,10 +1005,7 @@
       }
 
       try {
-        // Ask for heading permissions on iOS while we still have a user gesture
         await enableHeadingSensorsIfNeeded();
-
-        // Attach both orientation events; whichever works will update headingDeg
         window.addEventListener("deviceorientationabsolute", handleDeviceOrientation, true);
         window.addEventListener("deviceorientation", handleDeviceOrientation, true);
 
@@ -1038,56 +1014,48 @@
         navigator.geolocation.getCurrentPosition(async pos => {
           const realPos = [pos.coords.longitude, pos.coords.latitude];
 
-          if (urlOverrideStart) {
-            userPos = urlOverrideStart;
-            log("🐞 Using URL override instead of real GPS:", userPos.toString());
-          } else {
-            userPos = realPos;
-            log("GPS OK:", userPos.toString());
-          }
+          userPos = urlOverrideStart ? urlOverrideStart.slice() : realPos;
+          log("GPS OK:", userPos.toString());
 
           gpsTarget = userPos.slice();
           smoothPos = userPos.slice();
 
-          // Arrow marker
+          // Build marker element with inner rotor
           const el = document.createElement("div");
           el.className = "arrow-marker";
+
+          const rotor = document.createElement("div");
+          rotor.className = "arrow-rotor";
+          el.appendChild(rotor);
+
+          arrowRotorEl = rotor;
+
           arrowMapboxMarker = new mapboxgl.Marker(el)
             .setLngLat(userPos)
             .addTo(map);
 
-          // Initial camera
           map.jumpTo({ center: userPos, zoom: 16, pitch: 55, bearing: headingDeg ?? 0 });
           applyHeadingToArrow();
 
-          // Start smoothing loop once
           if (!animStarted) {
             animStarted = true;
             requestAnimationFrame(animate);
           }
 
-          // Start full live watch
           navigator.geolocation.watchPosition(p => {
             const newPos = [p.coords.longitude, p.coords.latitude];
+            userPos = urlOverrideStart ? urlOverrideStart.slice() : newPos;
 
-            //_toggle between real GPS and debug override
-            if (urlOverrideStart) {
-              userPos = urlOverrideStart.slice();
-            } else {
-              userPos = newPos;
-            }
-
-            // Keep latest raw fix for smoothing
             gpsTarget = userPos.slice();
 
-            // Use GPS heading when moving (more reliable than sensors while driving)
+            // Prefer GPS heading when moving (best for driving)
             const gpsHeading = p.coords.heading;
             const gpsSpeed = p.coords.speed;
             if (typeof gpsHeading === "number" && gpsSpeed != null && gpsSpeed > 1.0) {
               headingDeg = norm360(gpsHeading);
             }
 
-            // Always apply heading if we have it
+            // Keep arrow correct immediately
             applyHeadingToArrow();
 
             if (navActive) {
@@ -1095,10 +1063,6 @@
               updateNavUI();
               maybeReroute();
             }
-
-            // Camera is handled smoothly in the animation loop (but keep one call for immediate response)
-            if (!animStarted && followUser) updateCamera();
-
           }, e => err("watchPosition:", e.message), {
             enableHighAccuracy: true,
             maximumAge: 0,
@@ -1107,10 +1071,6 @@
 
           gpsOverlay.style.display = "none";
           await buildRouteFromUser();
-
-          // Put map into nav mode immediately after we have a route
-          navActive = true;
-          updateCamera();
 
         }, error => {
           err("GPS initial error:", error.message);
@@ -1122,9 +1082,7 @@
       }
     });
 
-    // --------------------------
     // RECENTER FAB
-    // --------------------------
     map.on("dragstart", () => {
       followUser = false;
       recenterFab.style.display = "flex";
@@ -1134,6 +1092,7 @@
       followUser = true;
       recenterFab.style.display = "none";
       updateCamera(smoothPos || userPos);
+      applyHeadingToArrow();
     });
 
   </script>
