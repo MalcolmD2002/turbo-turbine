@@ -337,7 +337,7 @@ export const SITE_DATA = {
 },
 
 
-" White Hills": {
+"White Hills": {
 	StartKey: "O&M",
 	points: {
 		"O&M": [ -114.505, 35.791],
@@ -409,7 +409,7 @@ export const SITE_DATA = {
 		"T66": [ -114.412, 35.824],
 		"T67": [ -114.407, 35.823],
 		"T68": [ -114.403, 35.822],
-		"T69": [ -114,398, 35.821],
+		"T69": [ -114.398, 35.821],
 		"T70": [ -114.393, 35.819],
 		"T71": [ -114.387, 35.818],
 		"T72": [ -114.484, 35.828],
@@ -636,5 +636,6 @@ export async function findBestRoute(pointsObj, accessToken, options = {}) {
   const route = await fetchRouteGeoJSON(orderedCoords, accessToken);
   return { keys: orderedKeys, coords: orderedCoords, route };
 }
+
 
 
