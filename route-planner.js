@@ -523,6 +523,16 @@ export const SITE_DATA = {
 "Irish Creek": {
 	startKey: "O&M",
 	points: {
+	"O&M": [ -96.426, 39.701 ],
+    "T1":  [ -96.490, 39.568 ],
+    "T2":  [ -96.485, 39.570 ],
+    "T3":  [ -96.479, 39.569 ],
+    "T4":  [ -96.471, 39.568 ],
+    "T5":  [ -96.461, 39.568 ],
+    "T6":  [ -96.455, 39.568 ],
+    "T7":  [ -96.448, 39.571 ],
+    "T8":  [ -96.437, 39.568 ],
+    "T9":  [ -96.432, 39.568 ],
 	"T10": [ -96.422, 39.568],
 	"T11": [ -96.416, 39.569],
 	"T12": [ -96.412, 39.572],
@@ -788,5 +798,6 @@ export async function findBestRoute(pointsObj, accessToken, options = {}) {
   const route = await fetchRouteGeoJSON(orderedCoords, accessToken);
   return { keys: orderedKeys, coords: orderedCoords, route };
 }
+
 
 
