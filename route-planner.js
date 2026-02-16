@@ -517,8 +517,7 @@ export const SITE_DATA = {
 		"L01": [ -88.336, 40.517],
 		"L03": [ -88.312, 40.510]
 		}
-},
-
+	},
 
 
 "Irish Creek": {
@@ -789,4 +788,5 @@ export async function findBestRoute(pointsObj, accessToken, options = {}) {
   const route = await fetchRouteGeoJSON(orderedCoords, accessToken);
   return { keys: orderedKeys, coords: orderedCoords, route };
 }
+
 
